@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import CameraObscuraScene from '$components/CameraObscuraScene.svelte';
 	import ControlPanel from '$components/ControlPanel.svelte';
 	import TimelinePanel from '$components/TimelinePanel.svelte';
@@ -7,6 +7,13 @@
 	import TeachingGuide from '$components/TeachingGuide.svelte';
 	import CourseCaseManager from '$components/CourseCaseManager.svelte';
 	import ConclusionPanel from '$components/ConclusionPanel.svelte';
+	import CollaborationRoom from '$components/CollaborationRoom.svelte';
+	import AssignmentManager from '$components/AssignmentManager.svelte';
+	import SubmissionPanel from '$components/SubmissionPanel.svelte';
+	import Leaderboard from '$components/Leaderboard.svelte';
+	import AnnotationPanel from '$components/AnnotationPanel.svelte';
+	import VersionCompare from '$components/VersionCompare.svelte';
+	import ClassReport from '$components/ClassReport.svelte';
 	import type {
 		CameraParams,
 		Preset,
@@ -15,7 +22,9 @@
 		InvalidDistanceResult,
 		ExperimentRecording,
 		ExperimentFrame,
-		ExperimentCase
+		ExperimentCase,
+		Submission,
+		ExperimentConclusion
 	} from '$lib/cameraObscura';
 	import {
 		DEFAULT_PARAMS,
@@ -28,8 +37,18 @@
 		createDefaultScheme,
 		loadRecordingsFromStorage,
 		saveCaseToStorage,
-		loadCasesFromStorage
+		loadCasesFromStorage,
+		computeImagingQualityScore
 	} from '$lib/cameraObscura';
+	import {
+		notifications,
+		currentUser,
+		activeRoomId,
+		sendSync,
+		updateParticipantState,
+		logActivity,
+		pushNotification
+	} from '$lib/stores';
 
 	let schemes: SchemeSlot[] = [createDefaultScheme(0)];
 	let presets: Preset[] = [];
@@ -54,6 +73,20 @@
 	let currentTimelineTime: number = 0;
 	let showTrajectoryPanel: boolean = false;
 	let timelineRef: TimelinePanel | null = null;
+
+	let colabRoomOpen = false;
+	let assignmentOpen = false;
+	let submissionOpen = false;
+	let leaderboardOpen = false;
+	let annotationOpen = false;
+	let versionCompareOpen = false;
+	let classReportOpen = false;
+	let targetSubmission: Submission | null = null;
+	let targetAssignmentId: string | null = null;
+	let broadcastTimer: number | null = null;
+
+	$: user = $currentUser;
+	$: rid = $activeRoomId;
 
 	$: currentParams = schemes[activeSchemeIndex]?.params || DEFAULT_PARAMS;
 
@@ -464,6 +497,61 @@
 		downloadFile(html, `暗箱对比报告_${Date.now()}.html`, 'text/html');
 	}
 
+	function handleBroadcastParams(p: CameraParams) {
+		updateSchemeParams(activeSchemeIndex, { ...p });
+	}
+
+	function handleOpenSubmission(assignmentId: string) {
+		targetAssignmentId = assignmentId;
+		assignmentOpen = false;
+		submissionOpen = true;
+	}
+
+	function handleCompareVersions(s: Submission) {
+		targetSubmission = s;
+		versionCompareOpen = true;
+	}
+
+	function handleOpenAnnotations(s: Submission) {
+		targetSubmission = s;
+		annotationOpen = true;
+	}
+
+	function handleApplyVersionParams(p: CameraParams) {
+		updateSchemeParams(activeSchemeIndex, { ...p });
+		pushNotification('success', '已应用该版本参数');
+	}
+
+	function onReceiveBroadcast(e: Event) {
+		const ev = e as CustomEvent;
+		const p = ev.detail?.params as CameraParams | undefined;
+		if (p) handleBroadcastParams(p);
+	}
+
+	function startParamBroadcast() {
+		if (broadcastTimer) return;
+		if (typeof window !== 'undefined') {
+			broadcastTimer = window.setInterval(() => {
+				if (!rid || !user || user.role !== 'student') return;
+				sendSync('params_update', { params: currentParams });
+				updateParticipantState(rid, user.id, {
+					currentParams: { ...currentParams },
+					lastParamsUpdate: Date.now(),
+					score: Math.round(computeImagingQualityScore(currentParams) * 100)
+				});
+			}, 3000);
+		}
+	}
+
+	function stopParamBroadcast() {
+		if (broadcastTimer) {
+			if (typeof clearInterval !== 'undefined') {
+				clearInterval(broadcastTimer);
+			}
+			broadcastTimer = null;
+		}
+	}
+
 	function getGridClass(): string {
 		const count = schemes.length;
 		if (count <= 1) return 'split-grid-1';
@@ -475,7 +563,11 @@
 	onMount(() => {
 		checkMobile();
 		loadPresetsFromStorage();
-		window.addEventListener('resize', checkMobile);
+		if (typeof window !== 'undefined') {
+			window.addEventListener('resize', checkMobile);
+			window.addEventListener('coop_broadcast_params', onReceiveBroadcast);
+		}
+		startParamBroadcast();
 
 		// 解析分享链接
 		if (typeof window !== 'undefined') {
@@ -499,11 +591,13 @@
 						window.history.replaceState({}, '', url.pathname);
 
 						// 延迟提示，确保界面渲染完成
-						setTimeout(() => {
-							alert(
-								`🎉 案例导入成功！\n\n"${caseData.name}"\n\n已自动应用参数，您可以在案例库中查看。`
-							);
-						}, 500);
+						if (typeof setTimeout !== 'undefined') {
+							setTimeout(() => {
+								alert(
+									`🎉 案例导入成功！\n\n"${caseData.name}"\n\n已自动应用参数，您可以在案例库中查看。`
+								);
+							}, 500);
+						}
 					}
 				} catch (e) {
 					console.warn('分享链接解析失败:', e);
@@ -513,8 +607,16 @@
 		}
 
 		return () => {
-			window.removeEventListener('resize', checkMobile);
+			if (typeof window !== 'undefined') {
+				window.removeEventListener('resize', checkMobile);
+				window.removeEventListener('coop_broadcast_params', onReceiveBroadcast);
+			}
+			stopParamBroadcast();
 		};
+	});
+
+	onDestroy(() => {
+		stopParamBroadcast();
 	});
 </script>
 
@@ -525,26 +627,66 @@
 				<span class="text-2xl">📷</span>
 				<div>
 					<h1 class="text-lg font-bold text-surface-100">
-						暗箱历史实验回放与学习引导系统
+						暗箱实验协作与课堂评测平台
 					</h1>
 					<p class="text-xs text-surface-400">
-						Historical Experiment Playback & Learning Guidance System
+						Camera Obscura Collaboration & Classroom Assessment Platform
 					</p>
 				</div>
 			</div>
 
 			<div class="flex items-center gap-2">
 				{#if !isMobile}
+					<button
+						on:click={() => (colabRoomOpen = true)}
+						class="px-3 py-1.5 text-xs rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 transition-all flex items-center gap-1.5 shadow-md"
+						class:ring-2={!!rid}
+						class:ring-primary-400={!!rid}
+						title="协作与课堂"
+					>
+						{#if rid}
+							<span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+						{/if}
+						👥 协作 {rid ? `(${rid.slice(0, 6)})` : ''}
+					</button>
 					<TeachingGuide params={currentParams} on:applyParams={handleApplyTeachingParams} />
 					<CourseCaseManager
 						params={currentParams}
 						recording={currentRecording}
 						on:loadCase={handleLoadCase}
 					/>
+					<button
+						on:click={() => (assignmentOpen = true)}
+						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
+						title="任务与评分"
+					>
+						📋 任务
+					</button>
+					<button
+						on:click={() => (submissionOpen = true)}
+						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
+						title="提交实验"
+					>
+						📝 提交
+					</button>
+					<button
+						on:click={() => (leaderboardOpen = true)}
+						class="px-3 py-1.5 text-xs rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 transition-all flex items-center gap-1.5 shadow-md"
+						title="实时排行榜"
+					>
+						🏆 排行
+					</button>
 					<ConclusionPanel
 						recording={currentRecording}
 						currentParams={currentParams}
 					/>
+					<button
+						on:click={() => (classReportOpen = true)}
+						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
+						title="班级学习报告"
+					>
+						📊 报告
+					</button>
 					<button
 						on:click={() => (showTrajectoryPanel = !showTrajectoryPanel)}
 						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
@@ -552,14 +694,14 @@
 						class:text-white={showTrajectoryPanel}
 						title="参数轨迹"
 					>
-						� 轨迹
+						📈 轨迹
 					</button>
 					<button
 						on:click={exportScreenshot}
 						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
 						title="导出对比截图"
 					>
-						� 截图
+						📸 截图
 					</button>
 				{/if}
 				{#if isMobile}
@@ -949,9 +1091,71 @@
 		on:seek={handleTimelineSeek}
 		on:recordingSaved={handleRecordingSaved}
 	/>
+
+	<CollaborationRoom
+		params={currentParams}
+		bind:open={colabRoomOpen}
+		onBroadcastParams={handleBroadcastParams}
+	/>
+
+	<AssignmentManager
+		params={currentParams}
+		bind:open={assignmentOpen}
+		onOpenSubmission={handleOpenSubmission}
+	/>
+
+	<SubmissionPanel
+		params={currentParams}
+		recording={currentRecording}
+		conclusion={null}
+		assignmentId={targetAssignmentId}
+		bind:open={submissionOpen}
+		onCompareVersions={handleCompareVersions}
+		onOpenAnnotations={handleOpenAnnotations}
+	/>
+
+	<Leaderboard bind:open={leaderboardOpen} mode={rid ? 'room' : 'class'} />
+
+	<AnnotationPanel submission={targetSubmission} bind:open={annotationOpen} />
+
+	<VersionCompare
+		submission={targetSubmission}
+		bind:open={versionCompareOpen}
+		onApplyParams={handleApplyVersionParams}
+	/>
+
+	<ClassReport bind:open={classReportOpen} />
+
+	<div class="fixed top-4 right-4 z-[999] flex flex-col gap-2 max-w-xs pointer-events-none">
+		{#each $notifications as n (n.id)}
+			{@const notifBg =
+				n.type === 'success' ? 'bg-emerald-600/90 border-emerald-400' :
+				n.type === 'warning' ? 'bg-amber-600/90 border-amber-400' :
+				n.type === 'error' ? 'bg-rose-600/90 border-rose-400' :
+				'bg-sky-600/90 border-sky-400'}
+			{@const emoji = n.type === 'success' ? '✅' : n.type === 'warning' ? '⚠️' : n.type === 'error' ? '❌' : 'ℹ️'}
+			<div class="pointer-events-auto px-4 py-2.5 rounded-lg shadow-xl text-sm font-medium text-white notification-slide-in border-l-4 backdrop-blur-sm {notifBg}">
+				{emoji} {n.message}
+			</div>
+		{/each}
+	</div>
 </div>
 
 <style>
+	:global(.notification-slide-in) {
+		animation: slideIn 0.2s ease-out;
+	}
+	@keyframes slideIn {
+		from {
+			opacity: 0;
+			transform: translateX(20px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
 	.split-grid-1 {
 		display: grid;
 		grid-template-columns: 1fr;

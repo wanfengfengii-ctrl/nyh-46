@@ -1140,3 +1140,936 @@ export function importRecordingFromJson(json: string): ExperimentRecording | nul
 		return null;
 	}
 }
+
+// ============================================================
+// 协作与课堂评测数据模型
+// ============================================================
+
+export type UserRole = 'teacher' | 'student' | 'guest';
+
+export interface User {
+	id: string;
+	name: string;
+	role: UserRole;
+	avatar: string;
+	studentId?: string;
+	classId?: string;
+	color?: string;
+	online?: boolean;
+	lastActive?: number;
+}
+
+export interface Classroom {
+	id: string;
+	name: string;
+	teacherId: string;
+	studentIds: string[];
+	createdAt: number;
+	activeRoomId?: string | null;
+}
+
+export type RoomStatus = 'waiting' | 'active' | 'paused' | 'ended';
+
+export interface CollaborationRoom {
+	id: string;
+	code: string;
+	name: string;
+	classId: string | null;
+	teacherId: string;
+	participantIds: string[];
+	status: RoomStatus;
+	createdAt: number;
+	startedAt?: number;
+	endedAt?: number;
+	currentAssignmentId?: string | null;
+	mode: 'individual' | 'group' | 'demo';
+}
+
+export interface RoomParticipantState {
+	roomId: string;
+	userId: string;
+	joinedAt: number;
+	currentParams: CameraParams | null;
+	currentRecordingId: string | null;
+	lastParamsUpdate: number;
+	score: number;
+	progress: number;
+	activityLog: {
+		timestamp: number;
+		action: string;
+		detail?: string;
+	}[];
+}
+
+export interface RubricCriterion {
+	id: string;
+	name: string;
+	description: string;
+	maxScore: number;
+	weight: number;
+}
+
+export interface Assignment {
+	id: string;
+	title: string;
+	description: string;
+	roomId: string;
+	teacherId: string;
+	classId: string | null;
+	courseTopicId: string | null;
+	createdAt: number;
+	dueDate?: number;
+	rubric: RubricCriterion[];
+	totalScore: number;
+	requirements: {
+		needRecording: boolean;
+		needConclusion: boolean;
+		needKeyframes: number;
+		minQualityScore: number;
+	};
+	initialParams?: CameraParams | null;
+	hintLevel: 'none' | 'low' | 'medium' | 'high';
+}
+
+export type SubmissionStatus = 'draft' | 'submitted' | 'reviewed' | 'returned';
+
+export interface Submission {
+	id: string;
+	assignmentId: string;
+	roomId: string;
+	studentId: string;
+	studentName: string;
+	recordingId: string | null;
+	recordingSnapshot?: ExperimentRecording | null;
+	finalParams: CameraParams | null;
+	conclusion: ExperimentConclusion | null;
+	conclusionText: string;
+	status: SubmissionStatus;
+	submittedAt?: number;
+	reviewedAt?: number;
+	reviewerId?: string;
+	scores: Record<string, number>;
+	totalScore: number;
+	feedback: string;
+	annotations: Annotation[];
+	versionHistory: SubmissionVersion[];
+}
+
+export interface SubmissionVersion {
+	id: string;
+	versionNumber: number;
+	timestamp: number;
+	userId: string;
+	params: CameraParams | null;
+	recordingSnapshot?: ExperimentRecording | null;
+	conclusionText: string;
+	note?: string;
+}
+
+export interface Annotation {
+	id: string;
+	submissionId: string;
+	authorId: string;
+	authorName: string;
+	authorRole: UserRole;
+	type: 'comment' | 'suggestion' | 'correction' | 'praise';
+	timestamp: number;
+	content: string;
+	targetType: 'params' | 'conclusion' | 'recording' | 'general';
+	targetRef?: string;
+	frameIndex?: number;
+	replies?: AnnotationReply[];
+}
+
+export interface AnnotationReply {
+	id: string;
+	authorId: string;
+	authorName: string;
+	timestamp: number;
+	content: string;
+}
+
+export interface LeaderboardEntry {
+	userId: string;
+	userName: string;
+	studentId?: string;
+	avatar: string;
+	color?: string;
+	rank: number;
+	prevRank?: number;
+	totalScore: number;
+	assignmentCount: number;
+	avgScore: number;
+	bestScore: number;
+	qualityScore: number;
+	completionRate: number;
+	lastActivity: number;
+	achievements: string[];
+}
+
+export interface MasteryIndicator {
+	topicId: string;
+	topicName: string;
+	masteryLevel: number;
+	attempts: number;
+	bestScore: number;
+	avgScore: number;
+	trend: 'improving' | 'stable' | 'declining';
+}
+
+export interface ClassReport {
+	classId: string;
+	className: string;
+	generatedAt: number;
+	periodStart: number;
+	periodEnd: number;
+	assignmentSummary: {
+		totalAssignments: number;
+		submissionRate: number;
+		avgTotalScore: number;
+		avgQualityScore: number;
+	};
+	studentReports: {
+		userId: string;
+		userName: string;
+		studentId?: string;
+		submissionsCount: number;
+		avgScore: number;
+		totalScore: number;
+		rank: number;
+		completionRate: number;
+		avgQualityScore: number;
+		masteryIndicators: MasteryIndicator[];
+		strongTopics: string[];
+		weakTopics: string[];
+		suggestions: string[];
+	}[];
+	classMastery: MasteryIndicator[];
+	overallFeedback: string;
+}
+
+export type SyncMessageType =
+	| 'join_room'
+	| 'leave_room'
+	| 'params_update'
+	| 'recording_save'
+	| 'assignment_publish'
+	| 'submission_submit'
+	| 'submission_review'
+	| 'annotation_add'
+	| 'annotation_reply'
+	| 'room_status'
+	| 'broadcast_params'
+	| 'chat';
+
+export interface SyncMessage {
+	type: SyncMessageType;
+	roomId: string;
+	senderId: string;
+	senderName: string;
+	timestamp: number;
+	payload: Record<string, unknown>;
+}
+
+// ============================================================
+// 协作工具函数
+// ============================================================
+
+export function generateRoomCode(): string {
+	const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+	let code = '';
+	for (let i = 0; i < 6; i++) {
+		code += chars.charAt(Math.floor(Math.random() * chars.length));
+	}
+	return code;
+}
+
+export function createDefaultUser(
+	name: string,
+	role: UserRole = 'student',
+	classId?: string
+): User {
+	const colors = ['#4fc3f7', '#81c784', '#ffb74d', '#f06292', '#ba68c8', '#4dd0e1', '#aed581', '#ff8a65'];
+	const avatars = ['🧑‍🎓', '👨‍🎓', '👩‍🎓', '👨‍🏫', '👩‍🏫', '🔬', '📚', '🎓'];
+	return {
+		id: generateId(),
+		name,
+		role,
+		avatar: avatars[Math.floor(Math.random() * avatars.length)],
+		studentId: role === 'student' ? 'S' + Math.floor(Math.random() * 900000 + 100000) : undefined,
+		classId,
+		color: colors[Math.floor(Math.random() * colors.length)],
+		online: true,
+		lastActive: Date.now()
+	};
+}
+
+export function createDefaultRubric(): RubricCriterion[] {
+	return [
+		{ id: 'accuracy', name: '成像准确性', description: '参数设置与成像效果符合物理原理', maxScore: 25, weight: 0.25 },
+		{ id: 'quality', name: '成像质量', description: '清晰度、亮度、像高综合平衡', maxScore: 30, weight: 0.30 },
+		{ id: 'exploration', name: '实验探索', description: '系统探索各参数的影响', maxScore: 20, weight: 0.20 },
+		{ id: 'conclusion', name: '实验结论', description: '结论完整、准确、有深度', maxScore: 15, weight: 0.15 },
+		{ id: 'documentation', name: '记录规范', description: '关键帧、记录完整规范', maxScore: 10, weight: 0.10 }
+	];
+}
+
+export function createAssignment(
+	title: string,
+	roomId: string,
+	teacherId: string,
+	opts?: Partial<Assignment>
+): Assignment {
+	const rubric = createDefaultRubric();
+	const totalScore = rubric.reduce((s, r) => s + r.maxScore, 0);
+	return {
+		id: generateId(),
+		title,
+		description: '',
+		roomId,
+		teacherId,
+		classId: null,
+		courseTopicId: null,
+		createdAt: Date.now(),
+		rubric,
+		totalScore,
+		requirements: {
+			needRecording: true,
+			needConclusion: true,
+			needKeyframes: 3,
+			minQualityScore: 0.5
+		},
+		initialParams: null,
+		hintLevel: 'medium',
+		...opts
+	};
+}
+
+export function createSubmission(
+	assignmentId: string,
+	roomId: string,
+	student: User
+): Submission {
+	return {
+		id: generateId(),
+		assignmentId,
+		roomId,
+		studentId: student.id,
+		studentName: student.name,
+		recordingId: null,
+		recordingSnapshot: null,
+		finalParams: null,
+		conclusion: null,
+		conclusionText: '',
+		status: 'draft',
+		scores: {},
+		totalScore: 0,
+		feedback: '',
+		annotations: [],
+		versionHistory: []
+	};
+}
+
+export function createSubmissionVersion(
+	submission: Submission,
+	userId: string,
+	note?: string
+): SubmissionVersion {
+	return {
+		id: generateId(),
+		versionNumber: submission.versionHistory.length + 1,
+		timestamp: Date.now(),
+		userId,
+		params: submission.finalParams ? { ...submission.finalParams } : null,
+		recordingSnapshot: submission.recordingSnapshot
+			? JSON.parse(JSON.stringify(submission.recordingSnapshot))
+			: null,
+		conclusionText: submission.conclusionText,
+		note
+	};
+}
+
+export function calculateSubmissionAutoScore(
+	submission: Submission,
+	assignment: Assignment
+): Record<string, number> {
+	const scores: Record<string, number> = {};
+	const qualityScore = submission.finalParams
+		? computeImagingQualityScore(submission.finalParams)
+		: 0;
+
+	for (const criterion of assignment.rubric) {
+		switch (criterion.id) {
+			case 'quality':
+				scores[criterion.id] = Math.round(criterion.maxScore * qualityScore);
+				break;
+			case 'exploration': {
+				const keyframes = submission.recordingSnapshot?.frames.filter((f) => f.isKeyframe).length || 0;
+				const expFactor = Math.min(keyframes / Math.max(1, assignment.requirements.needKeyframes), 1.2);
+				const diversity = estimateParamDiversity(submission.recordingSnapshot?.frames || []);
+				scores[criterion.id] = Math.round(criterion.maxScore * Math.min(expFactor * 0.5 + diversity * 0.5, 1));
+				break;
+			}
+			case 'documentation': {
+				const hasRecording = assignment.requirements.needRecording ? !!submission.recordingId : true;
+				const keyframes = submission.recordingSnapshot?.frames.filter((f) => f.isKeyframe).length || 0;
+				const docScore =
+					(hasRecording ? 0.5 : 0) + Math.min(keyframes / Math.max(1, assignment.requirements.needKeyframes), 0.5);
+				scores[criterion.id] = Math.round(criterion.maxScore * docScore);
+				break;
+			}
+			default:
+				scores[criterion.id] = Math.round(criterion.maxScore * 0.6);
+		}
+	}
+
+	return scores;
+}
+
+function estimateParamDiversity(frames: ExperimentFrame[]): number {
+	if (frames.length < 3) return 0;
+	const params = ['boxLength', 'apertureSize', 'objectDistance', 'objectHeight', 'lightIntensity'] as const;
+	let variedCount = 0;
+	for (const p of params) {
+		const vals = frames.map((f) => f.params[p]);
+		const min = Math.min(...vals);
+		const max = Math.max(...vals);
+		if (max - min > (max + min) * 0.05) variedCount++;
+	}
+	return variedCount / params.length;
+}
+
+export function getTotalScore(scores: Record<string, number>): number {
+	return Object.values(scores).reduce((s, v) => s + v, 0);
+}
+
+export function computeLeaderboard(
+	submissions: Submission[],
+	users: User[],
+	classId?: string
+): LeaderboardEntry[] {
+	const safeSubmissions = Array.isArray(submissions) ? submissions : [];
+	const safeUsers = Array.isArray(users) ? users : [];
+
+	const filtered = classId
+		? safeSubmissions.filter((s) => {
+				const user = safeUsers.find((u) => u.id === s.studentId);
+				return user?.classId === classId;
+			})
+		: safeSubmissions;
+
+	const userScores = new Map<
+		string,
+		{
+			total: number;
+			count: number;
+			best: number;
+			qualityTotal: number;
+			completed: number;
+			lastActivity: number;
+		}
+	>();
+
+	for (const sub of filtered) {
+		const entry = userScores.get(sub.studentId) || {
+			total: 0,
+			count: 0,
+			best: 0,
+			qualityTotal: 0,
+			completed: 0,
+			lastActivity: 0
+		};
+		entry.total += sub.totalScore;
+		entry.count++;
+		entry.best = Math.max(entry.best, sub.totalScore);
+		if (sub.finalParams) entry.qualityTotal += computeImagingQualityScore(sub.finalParams);
+		if (sub.status === 'submitted' || sub.status === 'reviewed') entry.completed++;
+		entry.lastActivity = Math.max(entry.lastActivity, sub.submittedAt || sub.reviewedAt || 0);
+		userScores.set(sub.studentId, entry);
+	}
+
+	const entries: LeaderboardEntry[] = [];
+	for (const [userId, stats] of userScores.entries()) {
+		const user = safeUsers.find((u) => u.id === userId);
+		if (!user || user.role !== 'student') continue;
+		const avg = stats.count > 0 ? stats.total / stats.count : 0;
+		const qualityAvg = stats.count > 0 ? (stats.qualityTotal / stats.count) * 100 : 0;
+		entries.push({
+			userId,
+			userName: user.name,
+			studentId: user.studentId,
+			avatar: user.avatar,
+			color: user.color,
+			rank: 0,
+			totalScore: stats.total,
+			assignmentCount: stats.count,
+			avgScore: Math.round(avg * 10) / 10,
+			bestScore: stats.best,
+			qualityScore: Math.round(qualityAvg * 10) / 10,
+			completionRate: stats.count > 0 ? Math.round((stats.completed / stats.count) * 100) : 0,
+			lastActivity: stats.lastActivity,
+			achievements: deriveAchievements(stats, user)
+		});
+	}
+
+	entries.sort((a, b) => b.totalScore - a.totalScore || b.bestScore - a.bestScore);
+	entries.forEach((e, i) => (e.rank = i + 1));
+
+	return entries;
+}
+
+function deriveAchievements(stats: { best: number; count: number; qualityTotal: number }, user: User): string[] {
+	const ach: string[] = [];
+	if (user.role !== 'student') return ach;
+	if (stats.best >= 90) ach.push('🏆 金牌实验者');
+	else if (stats.best >= 75) ach.push('🥈 银牌实验者');
+	else if (stats.best >= 60) ach.push('🥉 铜牌实验者');
+	if (stats.count >= 5) ach.push('📚 勤勉学者');
+	const qAvg = stats.count > 0 ? (stats.qualityTotal / stats.count) * 100 : 0;
+	if (qAvg >= 80) ach.push('✨ 质量先锋');
+	return ach;
+}
+
+export function generateClassReport(
+	classroom: Classroom,
+	users: User[],
+	submissions: Submission[],
+	assignments: Assignment[],
+	periodStart?: number,
+	periodEnd?: number
+): ClassReport {
+	const start = periodStart || classroom.createdAt;
+	const end = periodEnd || Date.now();
+
+	const classSubmissions = submissions.filter((s) => {
+		const u = users.find((x) => x.id === s.studentId);
+		return u?.classId === classroom.id && (s.submittedAt || 0) >= start && (s.submittedAt || 0) <= end;
+	});
+
+	const classStudents = users.filter((u) => u.classId === classroom.id && u.role === 'student');
+
+	const avgTotal = classSubmissions.length > 0
+		? classSubmissions.reduce((s, x) => s + x.totalScore, 0) / classSubmissions.length
+		: 0;
+	const avgQuality = classSubmissions.length > 0
+		? classSubmissions.reduce((s, x) => s + (x.finalParams ? computeImagingQualityScore(x.finalParams) : 0), 0) /
+			classSubmissions.length
+		: 0;
+	const subRate = classStudents.length > 0
+		? (classSubmissions.filter((s) => s.status !== 'draft').length /
+				(assignments.length * classStudents.length)) *
+			100
+		: 0;
+
+	const studentReports = classStudents.map((student) => {
+		const subs = classSubmissions.filter((s) => s.studentId === student.id);
+		const total = subs.reduce((s, x) => s + x.totalScore, 0);
+		const avg = subs.length > 0 ? total / subs.length : 0;
+		const completion =
+			assignments.length > 0 ? (subs.filter((s) => s.status !== 'draft').length / assignments.length) * 100 : 0;
+		const qAvg = subs.length > 0
+			? subs.reduce((s, x) => s + (x.finalParams ? computeImagingQualityScore(x.finalParams) : 0), 0) / subs.length
+			: 0;
+
+		const mastery = computeMasteryIndicators(subs, assignments);
+		const strong = mastery.filter((m) => m.masteryLevel >= 70).map((m) => m.topicName);
+		const weak = mastery.filter((m) => m.masteryLevel < 40).map((m) => m.topicName);
+		const suggestions = generateStudentSuggestions(weak, mastery, avg, completion);
+
+		return {
+			userId: student.id,
+			userName: student.name,
+			studentId: student.studentId,
+			submissionsCount: subs.length,
+			avgScore: Math.round(avg * 10) / 10,
+			totalScore: total,
+			rank: 0,
+			completionRate: Math.round(completion),
+			avgQualityScore: Math.round(qAvg * 1000) / 10,
+			masteryIndicators: mastery,
+			strongTopics: strong,
+			weakTopics: weak,
+			suggestions
+		};
+	});
+
+	studentReports.sort((a, b) => b.totalScore - a.totalScore);
+	studentReports.forEach((r, i) => (r.rank = i + 1));
+
+	const allSubmissionsForMastery = classesSubmissions(classroom.id, users, submissions);
+	const classMastery = computeMasteryIndicators(allSubmissionsForMastery, assignments);
+
+	return {
+		classId: classroom.id,
+		className: classroom.name,
+		generatedAt: Date.now(),
+		periodStart: start,
+		periodEnd: end,
+		assignmentSummary: {
+			totalAssignments: assignments.length,
+			submissionRate: Math.round(Math.min(subRate, 100)),
+			avgTotalScore: Math.round(avgTotal * 10) / 10,
+			avgQualityScore: Math.round(avgQuality * 1000) / 10
+		},
+		studentReports,
+		classMastery,
+		overallFeedback: generateOverallFeedback(avgTotal, avgQuality, subRate, classMastery)
+	};
+}
+
+function classesSubmissions(
+	classId: string,
+	users: User[],
+	submissions: Submission[]
+): Submission[] {
+	return submissions.filter((s) => {
+		const u = users.find((x) => x.id === s.studentId);
+		return u?.classId === classId;
+	});
+}
+
+function computeMasteryIndicators(subs: Submission[], assignments: Assignment[]): MasteryIndicator[] {
+	const topicMap = new Map<
+		string,
+		{ topicName: string; scores: number[]; attempts: number; best: number }
+	>();
+
+	for (const sub of subs) {
+		const assignment = assignments.find((a) => a.id === sub.assignmentId);
+		const topicId = assignment?.courseTopicId || 'general';
+		const topicName =
+			DEFAULT_COURSE_TOPICS.find((t) => t.id === topicId)?.name || '综合实验';
+		const entry = topicMap.get(topicId) || { topicName, scores: [], attempts: 0, best: 0 };
+		entry.scores.push(sub.totalScore);
+		entry.attempts++;
+		entry.best = Math.max(entry.best, sub.totalScore);
+		topicMap.set(topicId, entry);
+	}
+
+	const indicators: MasteryIndicator[] = [];
+	for (const [topicId, data] of topicMap.entries()) {
+		if (data.scores.length === 0) continue;
+		const avg = data.scores.reduce((s, x) => s + x, 0) / data.scores.length;
+		const half = Math.ceil(data.scores.length / 2);
+		const recentAvg =
+			data.scores.slice(-half).reduce((s, x) => s + x, 0) / Math.max(1, data.scores.slice(-half).length);
+		const oldAvg = data.scores.slice(0, half).reduce((s, x) => s + x, 0) / half;
+		let trend: MasteryIndicator['trend'] = 'stable';
+		if (recentAvg - oldAvg > 5) trend = 'improving';
+		else if (oldAvg - recentAvg > 5) trend = 'declining';
+		indicators.push({
+			topicId,
+			topicName: data.topicName,
+			masteryLevel: Math.round(avg),
+			attempts: data.attempts,
+			bestScore: data.best,
+			avgScore: Math.round(avg * 10) / 10,
+			trend
+		});
+	}
+
+	return indicators;
+}
+
+function generateStudentSuggestions(
+	weak: string[],
+	mastery: MasteryIndicator[],
+	avg: number,
+	completion: number
+): string[] {
+	const suggestions: string[] = [];
+	if (completion < 80) suggestions.push('按时完成所有作业，不要遗漏任务');
+	if (avg < 60) suggestions.push('回顾基础原理，参考教学引导步骤进行实验');
+	if (weak.length > 0) suggestions.push(`重点加强：${weak.join('、')}`);
+	if (mastery.some((m) => m.trend === 'declining')) suggestions.push('保持学习节奏，近期成绩有波动');
+	if (suggestions.length === 0) suggestions.push('继续保持，挑战更高难度的实验');
+	return suggestions;
+}
+
+function generateOverallFeedback(
+	avgTotal: number,
+	avgQuality: number,
+	subRate: number,
+	classMastery: MasteryIndicator[]
+): string {
+	const parts: string[] = [];
+	if (avgTotal >= 80) parts.push('班级整体表现优秀，掌握程度良好。');
+	else if (avgTotal >= 60) parts.push('班级整体达标，部分同学需要加强练习。');
+	else parts.push('班级整体需加强基础训练，建议安排复习课。');
+	if (avgQuality >= 0.7) parts.push('成像质量控制较好。');
+	if (subRate < 70) parts.push('作业提交率有待提高，需要加强督促。');
+	const weakTopics = classMastery.filter((m) => m.masteryLevel < 50);
+	if (weakTopics.length > 0) parts.push(`薄弱主题：${weakTopics.map((m) => m.topicName).join('、')}。`);
+	return parts.join('');
+}
+
+export function exportClassReportAsHtml(report: ClassReport): string {
+	const dateFmt = new Date(report.generatedAt).toLocaleString('zh-CN');
+	let html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${report.className} 学习报告</title>
+<style>
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#f5f7fa;color:#1a1a2e;padding:32px;max-width:1200px;margin:0 auto}
+h1{color:#ee7718;border-bottom:3px solid #ee7718;padding-bottom:12px}
+h2{color:#4fc3f7;margin-top:32px;border-left:4px solid #4fc3f7;padding-left:12px}
+h3{color:#333}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.08);margin-bottom:20px}
+.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0}
+.summary-item{text-align:center;padding:16px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;border-radius:12px}
+.summary-item:nth-child(2){background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%)}
+.summary-item:nth-child(3){background:linear-gradient(135deg,#4facfe 0%,#00f2fe 100%)}
+.summary-item:nth-child(4){background:linear-gradient(135deg,#43e97b 0%,#38f9d7 100%)}
+.summary-item .num{font-size:32px;font-weight:bold;margin:4px 0}
+.summary-item .label{font-size:13px;opacity:0.9}
+table{border-collapse:collapse;width:100%;margin:12px 0;background:#fff}
+th,td{border:1px solid #e0e0e0;padding:10px 12px;text-align:center;font-size:14px}
+th{background:#4fc3f7;color:#fff;font-weight:600}
+tr:nth-child(even){background:#fafbfc}
+.rank-1{background:linear-gradient(90deg,#ffd700 0%,#ffed4e 100%) !important;font-weight:bold}
+.rank-2{background:linear-gradient(90deg,#c0c0c0 0%,#e8e8e8 100%) !important;font-weight:bold}
+.rank-3{background:linear-gradient(90deg,#cd7f32 0%,#daa06d 100%) !important;font-weight:bold}
+.mastery-bar{height:8px;background:#eee;border-radius:4px;overflow:hidden}
+.mastery-fill{height:100%;border-radius:4px}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px}
+.tag-green{background:#dcfce7;color:#166534}
+.tag-red{background:#fee2e2;color:#991b1b}
+.tag-yellow{background:#fef9c3;color:#854d0e}
+.tag-blue{background:#dbeafe;color:#1e40af}
+.meta{color:#666;font-size:13px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<h1>📊 ${report.className} 学习报告</h1>
+<p class="meta">报告生成时间：${dateFmt} | 周期：${new Date(report.periodStart).toLocaleDateString('zh-CN')} ~ ${new Date(report.periodEnd).toLocaleDateString('zh-CN')}</p>
+
+<div class="card">
+<h3>📈 班级总览</h3>
+<div class="summary-grid">
+<div class="summary-item"><div class="num">${report.assignmentSummary.totalAssignments}</div><div class="label">发布任务数</div></div>
+<div class="summary-item"><div class="num">${report.assignmentSummary.submissionRate}%</div><div class="label">作业提交率</div></div>
+<div class="summary-item"><div class="num">${report.assignmentSummary.avgTotalScore}</div><div class="label">平均总分</div></div>
+<div class="summary-item"><div class="num">${report.assignmentSummary.avgQualityScore}%</div><div class="label">平均成像质量</div></div>
+</div>
+<p style="margin-top:16px;padding:12px;background:#fff8e6;border-left:4px solid #ee7718;border-radius:4px"><strong>整体评价：</strong>${report.overallFeedback || '暂无评价'}</p>
+</div>
+
+<div class="card">
+<h3>🎯 班级知识点掌握度</h3>
+<table>
+<tr><th>知识点</th><th>掌握度</th><th>平均分数</th><th>最高分</th><th>参与人次</th><th>趋势</th></tr>
+${report.classMastery.map((m) => {
+	const color = m.masteryLevel >= 70 ? '#43e97b' : m.masteryLevel >= 40 ? '#fbbf24' : '#ef4444';
+	return `<tr>
+	<td>${m.topicName}</td>
+	<td><div class="mastery-bar"><div class="mastery-fill" style="width:${m.masteryLevel}%;background:${color}"></div></div><span style="font-size:12px;color:${color}">${m.masteryLevel}%</span></td>
+	<td>${m.avgScore}</td>
+	<td>${m.bestScore}</td>
+	<td>${m.attempts}</td>
+	<td>${m.trend === 'improving' ? '📈 上升' : m.trend === 'declining' ? '📉 下降' : '➡️ 稳定'}</td>
+	</tr>`;
+}).join('')}
+</table>
+</div>
+
+<div class="card">
+<h3>🏆 学生排名与详细报告</h3>
+<table>
+<tr><th>排名</th><th>姓名</th><th>学号</th><th>提交数</th><th>平均分</th><th>总分</th><th>完成率</th><th>成像质量</th><th>优势</th><th>薄弱</th></tr>
+${report.studentReports.map((r) => `
+<tr class="${r.rank === 1 ? 'rank-1' : r.rank === 2 ? 'rank-2' : r.rank === 3 ? 'rank-3' : ''}">
+<td>${r.rank}</td>
+<td><strong>${r.userName}</strong></td>
+<td>${r.studentId || '-'}</td>
+<td>${r.submissionsCount}</td>
+<td>${r.avgScore}</td>
+<td>${r.totalScore}</td>
+<td>${r.completionRate}%</td>
+<td>${r.avgQualityScore}%</td>
+<td>${r.strongTopics.map((t) => `<span class="tag tag-green">${t}</span>`).join('') || '-'}</td>
+<td>${r.weakTopics.map((t) => `<span class="tag tag-red">${t}</span>`).join('') || '-'}</td>
+</tr>
+`).join('')}
+</table>
+</div>
+${report.studentReports.map((r) => `
+<div class="card" style="border-left:4px solid ${r.rank <= 3 ? '#ee7718' : '#4fc3f7'}">
+<h3>${r.rank <= 3 ? (r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : '🥉') : '👤'} ${r.userName} <span style="font-size:14px;color:#888;font-weight:normal">排名 ${r.rank} / ${report.studentReports.length}</span></h3>
+<p><strong>学号：</strong>${r.studentId || '-'} | <strong>提交作业：</strong>${r.submissionsCount} 份 | <strong>平均分数：</strong>${r.avgScore} 分 | <strong>总分：</strong>${r.totalScore}</p>
+<p><strong>完成率：</strong>${r.completionRate}% | <strong>平均成像质量：</strong>${r.avgQualityScore}%</p>
+${r.masteryIndicators.length > 0 ? `
+<table style="margin:12px 0">
+<tr><th>知识点</th><th>掌握度</th><th>平均分</th><th>最高分</th><th>趋势</th></tr>
+${r.masteryIndicators.map((m) => {
+	const color = m.masteryLevel >= 70 ? '#43e97b' : m.masteryLevel >= 40 ? '#fbbf24' : '#ef4444';
+	return `<tr><td>${m.topicName}</td><td><div class="mastery-bar"><div class="mastery-fill" style="width:${m.masteryLevel}%;background:${color}"></div></div> <span style="color:${color}">${m.masteryLevel}%</span></td><td>${m.avgScore}</td><td>${m.bestScore}</td><td>${m.trend === 'improving' ? '📈' : m.trend === 'declining' ? '📉' : '➡️'}</td></tr>`;
+}).join('')}
+</table>` : '<p style="color:#888">暂无知识点掌握数据</p>'}
+${r.suggestions.length > 0 ? `<p><strong>💡 建议：</strong></p><ul style="margin:4px 0;padding-left:20px">${r.suggestions.map((s) => `<li>${s}</li>`).join('')}</ul>` : ''}
+</div>
+`).join('')}
+
+<p style="margin-top:32px;color:#888;font-size:12px;text-align:center">报告由 暗箱实验协作与课堂评测平台 自动生成</p>
+</body>
+</html>`;
+	return html;
+}
+
+// ============================================================
+// 本地存储辅助函数
+// ============================================================
+
+export function saveUsersToStorage(users: User[]) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem('coop_users', JSON.stringify(users));
+}
+
+export function loadUsersFromStorage(): User[] {
+	if (typeof localStorage === 'undefined') return [];
+	try {
+		return JSON.parse(localStorage.getItem('coop_users') || '[]');
+	} catch {
+		return [];
+	}
+}
+
+export function saveClassroomsToStorage(classrooms: Classroom[]) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem('coop_classrooms', JSON.stringify(classrooms));
+}
+
+export function loadClassroomsFromStorage(): Classroom[] {
+	if (typeof localStorage === 'undefined') return [];
+	try {
+		return JSON.parse(localStorage.getItem('coop_classrooms') || '[]');
+	} catch {
+		return [];
+	}
+}
+
+export function saveRoomsToStorage(rooms: CollaborationRoom[]) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem('coop_rooms', JSON.stringify(rooms));
+}
+
+export function loadRoomsFromStorage(): CollaborationRoom[] {
+	if (typeof localStorage === 'undefined') return [];
+	try {
+		return JSON.parse(localStorage.getItem('coop_rooms') || '[]');
+	} catch {
+		return [];
+	}
+}
+
+export function saveAssignmentsToStorage(assignments: Assignment[]) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem('coop_assignments', JSON.stringify(assignments));
+}
+
+export function loadAssignmentsFromStorage(): Assignment[] {
+	if (typeof localStorage === 'undefined') return [];
+	try {
+		return JSON.parse(localStorage.getItem('coop_assignments') || '[]');
+	} catch {
+		return [];
+	}
+}
+
+export function saveSubmissionsToStorage(submissions: Submission[]) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem('coop_submissions', JSON.stringify(submissions));
+}
+
+export function loadSubmissionsFromStorage(): Submission[] {
+	if (typeof localStorage === 'undefined') return [];
+	try {
+		return JSON.parse(localStorage.getItem('coop_submissions') || '[]');
+	} catch {
+		return [];
+	}
+}
+
+export function saveCurrentUser(user: User | null) {
+	if (typeof localStorage === 'undefined') return;
+	if (user) localStorage.setItem('coop_current_user', JSON.stringify(user));
+	else localStorage.removeItem('coop_current_user');
+}
+
+export function loadCurrentUser(): User | null {
+	if (typeof localStorage === 'undefined') return null;
+	try {
+		const s = localStorage.getItem('coop_current_user');
+		return s ? JSON.parse(s) : null;
+	} catch {
+		return null;
+	}
+}
+
+export function saveParticipantStates(states: RoomParticipantState[]) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem('coop_participant_states', JSON.stringify(states));
+}
+
+export function loadParticipantStates(): RoomParticipantState[] {
+	if (typeof localStorage === 'undefined') return [];
+	try {
+		return JSON.parse(localStorage.getItem('coop_participant_states') || '[]');
+	} catch {
+		return [];
+	}
+}
+
+// ============================================================
+// 协作状态管理器（使用 BroadcastChannel 模拟多人同步）
+// ============================================================
+
+export class CollaborationManager {
+	private channel: BroadcastChannel | null = null;
+	private listeners: Map<SyncMessageType, ((msg: SyncMessage) => void)[]> = new Map();
+	public currentRoom: CollaborationRoom | null = null;
+	public currentUser: User | null = null;
+
+	constructor(roomId?: string) {
+		if (typeof BroadcastChannel !== 'undefined' && roomId) {
+			this.channel = new BroadcastChannel(`coop_room_${roomId}`);
+			this.channel.onmessage = (e) => this.handleMessage(e.data as SyncMessage);
+		}
+	}
+
+	private handleMessage(msg: SyncMessage) {
+		const handlers = this.listeners.get(msg.type) || [];
+		handlers.forEach((h) => h(msg));
+	}
+
+	on(type: SyncMessageType, handler: (msg: SyncMessage) => void) {
+		if (!this.listeners.has(type)) this.listeners.set(type, []);
+		this.listeners.get(type)!.push(handler);
+	}
+
+	off(type: SyncMessageType, handler: (msg: SyncMessage) => void) {
+		const handlers = this.listeners.get(type) || [];
+		const idx = handlers.indexOf(handler);
+		if (idx >= 0) handlers.splice(idx, 1);
+	}
+
+	send(type: SyncMessageType, payload: Record<string, unknown>, roomId: string) {
+		if (!this.channel || !this.currentUser) return;
+		const msg: SyncMessage = {
+			type,
+			roomId,
+			senderId: this.currentUser.id,
+			senderName: this.currentUser.name,
+			timestamp: Date.now(),
+			payload
+		};
+		this.channel.postMessage(msg);
+		// 同时触发本地监听（用于单标签页测试）
+		this.handleMessage(msg);
+	}
+
+	close() {
+		this.channel?.close();
+		this.listeners.clear();
+	}
+}
