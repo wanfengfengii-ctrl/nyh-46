@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { CameraParams, ImageResult, Preset } from '$lib/cameraObscura';
-	import { calculateImage, validateParams, generateId } from '$lib/cameraObscura';
+	import type { CameraParams, ImageResult, Preset, ValidationWarning } from '$lib/cameraObscura';
+	import { calculateImage, validateParams, generateId, PRESET_COLORS } from '$lib/cameraObscura';
 
 	export let params: CameraParams;
 	export let presets: Preset[];
@@ -8,6 +8,8 @@
 	export let onPresetSelect: (preset: Preset) => void;
 	export let onPresetSave: () => void;
 	export let onPresetDelete: (id: string) => void;
+	export let onToggleCompare: (id: string) => void;
+	export let comparePresetIds: Set<string>;
 	export let selectedPresetId: string | null;
 
 	export let imageResult: ImageResult;
@@ -144,6 +146,18 @@
 		</label>
 	</div>
 
+	{#if validation.warnings && validation.warnings.length > 0}
+		<div class="card p-4 mb-4 bg-warning-900/30 border border-warning-700/50">
+			<h4 class="text-sm font-bold text-warning-400 mb-2">⚠ 参数提示</h4>
+			{#each validation.warnings as warning}
+				<div class="flex items-start gap-2 mb-2 last:mb-0">
+					<span class="text-warning-400 text-xs mt-0.5">●</span>
+					<p class="text-xs text-warning-200 leading-relaxed">{warning.message}</p>
+				</div>
+			{/each}
+		</div>
+	{/if}
+
 	<div class="card p-4 mb-4 bg-surface-800 border-surface-700">
 		<h3 class="text-lg font-bold mb-3 text-surface-100">成像结果</h3>
 
@@ -213,48 +227,66 @@
 			💾 保存当前方案
 		</button>
 
-		<div class="space-y-2 max-h-48 overflow-y-auto">
+		<div class="space-y-2 max-h-64 overflow-y-auto">
 			{#if presets.length === 0}
 				<p class="text-sm text-surface-400 text-center py-4">暂无保存的方案</p>
 			{/if}
 
-			{#each presets as preset (preset.id)}
+			{#each presets as preset, idx (preset.id)}
 				<div
-					role="button"
-					tabindex="0"
-					class={`p-3 rounded-lg cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+					class={`p-3 rounded-lg transition-colors ${
 						selectedPresetId === preset.id
-							? 'bg-primary-600 text-white'
-							: 'bg-surface-700 hover:bg-surface-600 text-surface-200'
+							? 'bg-primary-600/30 border border-primary-500'
+							: 'bg-surface-700 hover:bg-surface-600 border border-transparent'
 					}`}
-					on:click={() => onPresetSelect(preset)}
-					on:keydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							onPresetSelect(preset);
-						}
-					}}
 				>
-					<div class="flex justify-between items-center">
-						<span class="text-sm font-medium truncate">{preset.name}</span>
+					<div class="flex items-center gap-2 mb-1">
 						<button
-							on:click|stopPropagation={() => onPresetDelete(preset.id)}
-							on:keydown|stopPropagation={(e) => {
+							type="button"
+							class="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500"
+							style={`background: ${comparePresetIds.has(preset.id) ? (preset.color || PRESET_COLORS[idx % PRESET_COLORS.length]) : 'transparent'}; border: 2px solid ${preset.color || PRESET_COLORS[idx % PRESET_COLORS.length]};`}
+							on:click|stopPropagation={() => onToggleCompare(preset.id)}
+							aria-label={comparePresetIds.has(preset.id) ? '取消对比' : '加入对比'}
+							tabindex="0"
+						>
+							{#if comparePresetIds.has(preset.id)}
+								<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+								</svg>
+							{/if}
+						</button>
+						<span
+							class="text-sm font-medium truncate flex-1 cursor-pointer text-surface-100"
+							on:click={() => onPresetSelect(preset)}
+							on:keydown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
-									onPresetDelete(preset.id);
+									onPresetSelect(preset);
 								}
 							}}
-							class="btn btn-icon btn-sm variant-ghost-error"
+							role="button"
+							tabindex="0"
+						>
+							{preset.name}
+						</span>
+						<button
+							on:click|stopPropagation={() => onPresetDelete(preset.id)}
+							class="btn btn-icon btn-sm variant-ghost-error flex-shrink-0"
 							aria-label="删除方案"
 							tabindex="0"
 						>
 							✕
 						</button>
 					</div>
-					<div class="text-xs opacity-75 mt-1 font-mono">
-						孔: {preset.params.apertureSize.toFixed(2)} | 距: {preset.params.objectDistance.toFixed(1)}
+					<div class="text-xs opacity-60 mt-0.5 font-mono pl-7">
+						孔:{preset.params.apertureSize.toFixed(2)} | 距:{preset.params.objectDistance.toFixed(1)} | 箱:{preset.params.boxLength.toFixed(1)}
 					</div>
+					{#if comparePresetIds.has(preset.id)}
+						<div class="text-xs mt-1 pl-7 flex items-center gap-1" style={`color: ${preset.color || PRESET_COLORS[idx % PRESET_COLORS.length]}`}>
+							<span class="inline-block w-2 h-2 rounded-full" style={`background: ${preset.color || PRESET_COLORS[idx % PRESET_COLORS.length]}`}></span>
+							对比中
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>

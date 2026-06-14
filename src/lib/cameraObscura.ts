@@ -20,7 +20,19 @@ export interface Preset {
 	name: string;
 	params: CameraParams;
 	createdAt: number;
+	color?: string;
 }
+
+export const PRESET_COLORS = [
+	'#4fc3f7',
+	'#81c784',
+	'#ffb74d',
+	'#f06292',
+	'#ba68c8',
+	'#4dd0e1',
+	'#aed581',
+	'#ff8a65'
+];
 
 export const DEFAULT_PARAMS: CameraParams = {
 	boxLength: 5,
@@ -30,7 +42,15 @@ export const DEFAULT_PARAMS: CameraParams = {
 	lightIntensity: 1
 };
 
-export function validateParams(params: CameraParams): { valid: boolean; message?: string } {
+export interface ValidationWarning {
+	field: string;
+	level: 'warning' | 'error';
+	message: string;
+}
+
+export function validateParams(params: CameraParams): { valid: boolean; message?: string; warnings?: ValidationWarning[] } {
+	const warnings: ValidationWarning[] = [];
+
 	if (params.boxLength <= 0) {
 		return { valid: false, message: '暗箱长度必须大于零' };
 	}
@@ -46,7 +66,48 @@ export function validateParams(params: CameraParams): { valid: boolean; message?
 	if (params.lightIntensity <= 0) {
 		return { valid: false, message: '光线强度必须大于零' };
 	}
-	return { valid: true };
+
+	if (params.objectDistance <= params.boxLength) {
+		warnings.push({
+			field: 'objectDistance',
+			level: 'warning',
+			message: `物体距离(${params.objectDistance.toFixed(1)})过近，应大于暗箱长度(${params.boxLength.toFixed(1)})才能形成清晰倒像`
+		});
+	}
+
+	if (params.objectDistance >= 25) {
+		warnings.push({
+			field: 'objectDistance',
+			level: 'warning',
+			message: '物体距离过大，成像将非常小且暗淡，可能难以观察'
+		});
+	}
+
+	if (params.objectDistance <= 2.5) {
+		warnings.push({
+			field: 'objectDistance',
+			level: 'warning',
+			message: '物体距离过近，成像放大倍率过大，成像质量会显著下降'
+		});
+	}
+
+	if (params.apertureSize > 1) {
+		warnings.push({
+			field: 'apertureSize',
+			level: 'warning',
+			message: '孔径较大，成像更亮但更模糊（小孔成像原理）'
+		});
+	}
+
+	if (params.apertureSize < 0.1) {
+		warnings.push({
+			field: 'apertureSize',
+			level: 'warning',
+			message: '孔径非常小，成像清晰但非常暗淡'
+		});
+	}
+
+	return { valid: true, warnings };
 }
 
 export function calculateImage(params: CameraParams): ImageResult {

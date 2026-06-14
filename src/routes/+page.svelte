@@ -2,17 +2,20 @@
 	import { onMount } from 'svelte';
 	import CameraObscuraScene from '$components/CameraObscuraScene.svelte';
 	import ControlPanel from '$components/ControlPanel.svelte';
-	import type { CameraParams, Preset, ImageResult } from '$lib/cameraObscura';
-	import { DEFAULT_PARAMS, calculateImage, generateId } from '$lib/cameraObscura';
+	import type { CameraParams, Preset, ImageResult, ValidationWarning } from '$lib/cameraObscura';
+	import { DEFAULT_PARAMS, calculateImage, generateId, PRESET_COLORS, validateParams } from '$lib/cameraObscura';
 
 	let params: CameraParams = { ...DEFAULT_PARAMS };
 	let presets: Preset[] = [];
 	let selectedPresetId: string | null = null;
+	let comparePresetIds: Set<string> = new Set();
 	let showRays = true;
 	let isMobile = false;
 	let showMobilePanel = false;
 
 	$: imageResult = calculateImage(params);
+	$: comparePresets = presets.filter((p) => comparePresetIds.has(p.id));
+	$: paramWarnings = validateParams(params);
 
 	function checkMobile() {
 		if (typeof window !== 'undefined') {
@@ -28,12 +31,23 @@
 			id: generateId(),
 			name,
 			params: { ...params },
-			createdAt: Date.now()
+			createdAt: Date.now(),
+			color: PRESET_COLORS[presets.length % PRESET_COLORS.length]
 		};
 
 		presets = [...presets, newPreset];
 		selectedPresetId = newPreset.id;
 		savePresetsToStorage();
+	}
+
+	function toggleCompare(presetId: string) {
+		const newSet = new Set(comparePresetIds);
+		if (newSet.has(presetId)) {
+			newSet.delete(presetId);
+		} else {
+			newSet.add(presetId);
+		}
+		comparePresetIds = newSet;
 	}
 
 	function selectPreset(preset: Preset) {
@@ -46,6 +60,9 @@
 		if (selectedPresetId === id) {
 			selectedPresetId = null;
 		}
+		const newSet = new Set(comparePresetIds);
+		newSet.delete(id);
+		comparePresetIds = newSet;
 		savePresetsToStorage();
 	}
 
@@ -105,7 +122,7 @@
 
 	<div class="flex-1 flex overflow-hidden">
 		<div class="flex-1 relative overflow-hidden">
-			<CameraObscuraScene {params} {showRays} />
+			<CameraObscuraScene {params} {showRays} {comparePresets} />
 
 			<div class="absolute top-4 left-4 bg-surface-800/80 backdrop-blur-sm rounded-lg p-3 text-sm text-surface-200 max-w-xs">
 				<p class="font-semibold text-primary-400 mb-1">💡 使用提示</p>
@@ -121,6 +138,13 @@
 				<div class="absolute top-4 right-4 bg-error-600/90 backdrop-blur-sm rounded-lg p-3 text-sm text-white max-w-xs">
 					<p class="font-semibold">⚠ 参数无效</p>
 					<p class="text-xs mt-1">{imageResult.message}</p>
+				</div>
+			{:else if paramWarnings.warnings && paramWarnings.warnings.length > 0}
+				<div class="absolute top-4 right-4 bg-warning-800/80 backdrop-blur-sm border border-warning-600/50 rounded-lg p-3 text-sm max-w-xs">
+					<p class="font-semibold text-warning-300">⚠ 参数提示</p>
+					{#each paramWarnings.warnings as warning}
+						<p class="text-xs mt-1 text-warning-200">{warning.message}</p>
+					{/each}
 				</div>
 			{/if}
 
@@ -150,9 +174,11 @@
 					bind:showRays
 					bind:selectedPresetId
 					{imageResult}
+					{comparePresetIds}
 					onPresetSave={savePreset}
 					onPresetSelect={selectPreset}
 					onPresetDelete={deletePreset}
+					onToggleCompare={toggleCompare}
 				/>
 			</aside>
 		{/if}
@@ -183,13 +209,11 @@
 					bind:showRays
 					bind:selectedPresetId
 					{imageResult}
-					onPresetSave={() => {
-						savePreset();
-					}}
-					onPresetSelect={(p) => {
-						selectPreset(p);
-					}}
+					{comparePresetIds}
+					onPresetSave={savePreset}
+					onPresetSelect={selectPreset}
 					onPresetDelete={deletePreset}
+					onToggleCompare={toggleCompare}
 				/>
 			</div>
 		</div>

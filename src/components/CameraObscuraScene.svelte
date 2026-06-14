@@ -2,11 +2,12 @@
 	import { onMount, tick } from 'svelte';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-	import type { CameraParams, LightRay } from '$lib/cameraObscura';
+	import type { CameraParams, LightRay, Preset } from '$lib/cameraObscura';
 	import { calculateLightRays } from '$lib/cameraObscura';
 
 	export let params: CameraParams;
 	export let showRays: boolean = true;
+	export let comparePresets: Preset[] = [];
 
 	let container: HTMLDivElement;
 	let scene: THREE.Scene;
@@ -25,6 +26,9 @@
 	let objectLabel: THREE.Sprite;
 	let apertureLabel: THREE.Sprite;
 	let imageLabel: THREE.Sprite;
+	let prevBoxLength: number = 0;
+	let compareGroup: THREE.Group = new THREE.Group();
+	let prevCompareIds: string = '';
 
 	$: imageResult = calculateLightRays(params, 15);
 
@@ -367,6 +371,101 @@
 		imageLabel = createTextSprite('成像面', '#66ccff');
 		imageLabel.position.set(params.boxLength, 2.8, 0);
 		scene.add(imageLabel);
+
+		scene.add(compareGroup);
+
+		prevBoxLength = params.boxLength;
+	}
+
+	function createCompareObject(height: number, color: number, offsetX: number): THREE.Group {
+		const group = new THREE.Group();
+
+		const arrowMaterial = new THREE.MeshPhongMaterial({
+			color,
+			specular: 0x111111,
+			shininess: 30,
+			transparent: true,
+			opacity: 0.7
+		});
+
+		const shaftRadius = 0.1;
+		const shaftHeight = height * 0.7;
+		const shaftGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftHeight, 12);
+		const shaft = new THREE.Mesh(shaftGeo, arrowMaterial);
+		shaft.position.y = shaftHeight / 2 - height / 2 + 0.3;
+		group.add(shaft);
+
+		const headHeight = height * 0.3;
+		const headRadius = 0.25;
+		const headGeo = new THREE.ConeGeometry(headRadius, headHeight, 12);
+		const head = new THREE.Mesh(headGeo, arrowMaterial);
+		head.position.y = height / 2 - headHeight / 2;
+		group.add(head);
+
+		const baseGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.15, 12);
+		const base = new THREE.Mesh(baseGeo, arrowMaterial);
+		base.position.y = -height / 2 + 0.075;
+		group.add(base);
+
+		group.position.x = offsetX;
+		return group;
+	}
+
+	function updateCompareScene() {
+		if (!scene) return;
+
+		const currentIds = comparePresets.map((p) => p.id).join(',');
+		if (currentIds === prevCompareIds) return;
+		prevCompareIds = currentIds;
+
+		compareGroup.traverse((child) => {
+			if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Sprite) {
+				if (child.geometry) child.geometry.dispose();
+				if (child.material) {
+					if (Array.isArray(child.material)) {
+						child.material.forEach((m) => m.dispose());
+					} else {
+						(child.material as THREE.Material).dispose();
+					}
+				}
+			}
+		});
+		while (compareGroup.children.length > 0) {
+			compareGroup.remove(compareGroup.children[0]);
+		}
+
+		if (comparePresets.length === 0) return;
+
+		comparePresets.forEach((preset, i) => {
+			const presetColor = preset.color || '#4fc3f7';
+			const threeColor = new THREE.Color(presetColor);
+			const zOffset = (i + 1) * 2.5;
+
+			const obj = createCompareObject(preset.params.objectHeight, threeColor.getHex(), 0);
+			obj.position.set(-preset.params.objectDistance, 0, zOffset);
+			compareGroup.add(obj);
+
+			const label = createTextSprite(preset.name, presetColor);
+			label.position.set(-preset.params.objectDistance, preset.params.objectHeight / 2 + 0.8, zOffset);
+			compareGroup.add(label);
+
+			const raysData = calculateLightRays(preset.params, 9);
+			for (const ray of raysData.rays) {
+				const points = [
+					new THREE.Vector3(ray.start.x, ray.start.y, zOffset),
+					new THREE.Vector3(ray.aperture.x, ray.aperture.y, zOffset),
+					new THREE.Vector3(ray.end.x, ray.end.y, zOffset)
+				];
+				const geometry = new THREE.BufferGeometry().setFromPoints(points);
+				const material = new THREE.LineBasicMaterial({
+					color: threeColor,
+					transparent: true,
+					opacity: 0.15 + ray.intensity * 0.3
+				});
+				const line = new THREE.Line(geometry, material);
+				compareGroup.add(line);
+			}
+		});
 	}
 
 	function createTextSprite(text: string, color: string): THREE.Sprite {
@@ -393,9 +492,12 @@
 	function updateScene() {
 		if (!scene) return;
 
-		const oldTarget = controls.target.clone();
-		const oldCameraPosition = camera.position.clone();
-		const offset = new THREE.Vector3().subVectors(oldCameraPosition, oldTarget);
+		const boxLengthChanged = prevBoxLength !== 0 && prevBoxLength !== params.boxLength;
+		const oldTarget = boxLengthChanged ? controls.target.clone() : null;
+		const oldCameraPosition = boxLengthChanged ? camera.position.clone() : null;
+		const offset = boxLengthChanged && oldTarget
+			? new THREE.Vector3().subVectors(oldCameraPosition!, oldTarget)
+			: null;
 
 		while (boxGroup.children.length > 0) {
 			boxGroup.remove(boxGroup.children[0]);
@@ -445,10 +547,14 @@
 			imageLabel.position.set(params.boxLength, 2.8, 0);
 		}
 
-		const newTarget = new THREE.Vector3(params.boxLength / 2, 0, 0);
-		controls.target.copy(newTarget);
-		camera.position.copy(newTarget).add(offset);
-		controls.update();
+		if (boxLengthChanged && offset) {
+			const newTarget = new THREE.Vector3(params.boxLength / 2, 0, 0);
+			controls.target.copy(newTarget);
+			camera.position.copy(newTarget).add(offset);
+			controls.update();
+		}
+
+		prevBoxLength = params.boxLength;
 	}
 
 	function animate() {
@@ -491,6 +597,10 @@
 
 	$: if (scene) {
 		updateScene();
+	}
+
+	$: if (scene && comparePresets) {
+		updateCompareScene();
 	}
 
 	$: if (raysGroup) {
