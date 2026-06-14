@@ -14,7 +14,8 @@
 		ErrorAnalysis,
 		InvalidDistanceResult,
 		ExperimentRecording,
-		ExperimentFrame
+		ExperimentFrame,
+		ExperimentCase
 	} from '$lib/cameraObscura';
 	import {
 		DEFAULT_PARAMS,
@@ -25,7 +26,9 @@
 		generateReport,
 		downloadFile,
 		createDefaultScheme,
-		loadRecordingsFromStorage
+		loadRecordingsFromStorage,
+		saveCaseToStorage,
+		loadCasesFromStorage
 	} from '$lib/cameraObscura';
 
 	let schemes: SchemeSlot[] = [createDefaultScheme(0)];
@@ -473,6 +476,41 @@
 		checkMobile();
 		loadPresetsFromStorage();
 		window.addEventListener('resize', checkMobile);
+
+		// 解析分享链接
+		if (typeof window !== 'undefined') {
+			const params = new URLSearchParams(window.location.search);
+			const shareData = params.get('share');
+			if (shareData) {
+				try {
+					const decoded = decodeURIComponent(escape(atob(shareData)));
+					const caseData = JSON.parse(decoded) as ExperimentCase;
+					if (caseData.id && caseData.params) {
+						caseData.id = generateId();
+						caseData.createdAt = Date.now();
+						saveCaseToStorage(caseData);
+
+						// 自动应用参数
+						updateSchemeParams(activeSchemeIndex, { ...caseData.params });
+
+						// 清除 URL 参数
+						const url = new URL(window.location.href);
+						url.searchParams.delete('share');
+						window.history.replaceState({}, '', url.pathname);
+
+						// 延迟提示，确保界面渲染完成
+						setTimeout(() => {
+							alert(
+								`🎉 案例导入成功！\n\n"${caseData.name}"\n\n已自动应用参数，您可以在案例库中查看。`
+							);
+						}, 500);
+					}
+				} catch (e) {
+					console.warn('分享链接解析失败:', e);
+					alert('分享链接解析失败，数据格式不正确');
+				}
+			}
+		}
 
 		return () => {
 			window.removeEventListener('resize', checkMobile);

@@ -15,7 +15,8 @@
 		detectBestImagingIntervals,
 		computeImagingQualityScore,
 		saveRecordingToStorage,
-		loadRecordingsFromStorage
+		loadRecordingsFromStorage,
+		DEFAULT_COURSE_TOPICS
 	} from '$lib/cameraObscura';
 
 	export let params: CameraParams;
@@ -35,6 +36,8 @@
 	let playbackSpeed = 1;
 	let recordingName = '';
 	let recordingDescription = '';
+	let recordingTopicId: string | null = null;
+	let currentLoadedRecording: ExperimentRecording | null = null;
 	let showSaveDialog = false;
 	let savedRecordings: ExperimentRecording[] = [];
 	let showRecordingsList = false;
@@ -90,6 +93,7 @@
 
 		bestIntervals = detectBestImagingIntervals(frames);
 		recordingName = generateRecordingName();
+		recordingTopicId = null;
 		showSaveDialog = true;
 	}
 
@@ -196,7 +200,7 @@
 			id: generateId(),
 			name: recordingName || generateRecordingName(),
 			description: recordingDescription,
-			courseTopicId: null,
+			courseTopicId: recordingTopicId,
 			startTime: recordingStartTime,
 			endTime: recordingStartTime + getDuration(),
 			frames: [...frames],
@@ -210,6 +214,7 @@
 		dispatch('recordingSaved', { recording });
 		showSaveDialog = false;
 		recordingDescription = '';
+		recordingTopicId = null;
 	}
 
 	function loadRecording(recording: ExperimentRecording) {
@@ -218,6 +223,7 @@
 		bestIntervals = [...recording.bestIntervals];
 		currentTime = 0;
 		selectedRecordingId = recording.id;
+		currentLoadedRecording = recording;
 		showRecordingsList = false;
 
 		if (frames.length > 0) {
@@ -253,7 +259,7 @@
 			id: selectedRecordingId || generateId(),
 			name: recordingName || generateRecordingName(),
 			description: recordingDescription,
-			courseTopicId: null,
+			courseTopicId: currentLoadedRecording?.courseTopicId || recordingTopicId,
 			startTime: recordingStartTime,
 			endTime: recordingStartTime + getDuration(),
 			frames: [...frames],
@@ -548,10 +554,17 @@
 									✕
 								</button>
 							</div>
-							<div class="text-surface-400 mt-0.5 flex gap-3">
+							<div class="text-surface-400 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
 								<span>{recording.frames.length} 帧</span>
+								<span>🔑 {recording.frames.filter((f) => f.isKeyframe).length} 关键帧</span>
 								<span>{formatTime(recording.duration)}</span>
 								<span>{new Date(recording.createdAt).toLocaleDateString('zh-CN')}</span>
+								{#if recording.courseTopicId}
+									<span class="text-primary-400">
+										{DEFAULT_COURSE_TOPICS.find((t) => t.id === recording.courseTopicId)?.icon || '📂'}
+										{DEFAULT_COURSE_TOPICS.find((t) => t.id === recording.courseTopicId)?.name || '未分类'}
+									</span>
+								{/if}
 							</div>
 						</div>
 					{/each}
@@ -579,6 +592,18 @@
 							bind:value={recordingName}
 							class="w-full px-3 py-2 rounded bg-surface-700 text-surface-100 text-sm border border-surface-600 focus:border-primary-500 focus:outline-none"
 						/>
+					</div>
+					<div>
+						<label class="block text-xs text-surface-300 mb-1">课程主题</label>
+						<select
+							bind:value={recordingTopicId}
+							class="w-full px-3 py-2 rounded bg-surface-700 text-surface-100 text-sm border border-surface-600 focus:border-primary-500 focus:outline-none appearance-none cursor-pointer"
+						>
+							<option value={null}>未分类</option>
+							{#each DEFAULT_COURSE_TOPICS as topic}
+								<option value={topic.id}>{topic.icon} {topic.name}</option>
+							{/each}
+						</select>
 					</div>
 					<div>
 						<label class="block text-xs text-surface-300 mb-1">描述（可选）</label>

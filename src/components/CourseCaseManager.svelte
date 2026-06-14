@@ -142,6 +142,34 @@
 		}
 	}
 
+	function downloadCaseFile() {
+		if (!sharedCase) return;
+
+		const shareData = JSON.stringify(sharedCase, null, 2);
+		const blob = new Blob([shareData], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `${sharedCase.name.replace(/[^\w\u4e00-\u9fa5]/g, '_')}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
+	function copyShareLink() {
+		if (!sharedCase) return;
+
+		const shareData = btoa(unescape(encodeURIComponent(JSON.stringify(sharedCase))));
+		const shareUrl = `${window.location.origin}${window.location.pathname}?share=${shareData}`;
+
+		if (navigator.clipboard) {
+			navigator.clipboard.writeText(shareUrl).then(() => {
+				alert('分享链接已复制到剪贴板！\n对方打开链接即可自动导入案例。');
+			}).catch(() => {
+				alert('复制失败，请手动复制');
+			});
+		}
+	}
+
 	function importCase() {
 		const input = prompt('请粘贴分享的案例 JSON 数据:');
 		if (!input) return;
@@ -425,14 +453,57 @@
 			on:click|stopPropagation
 		>
 			<h3 class="text-lg font-bold text-surface-100 mb-3">🔗 分享案例</h3>
-			<p class="text-xs text-surface-400 mb-3">
-				已复制到剪贴板。将以下 JSON 数据发送给他人，他们可以通过"导入案例"功能加载。
-			</p>
-			<textarea
-				readonly
-				class="w-full h-40 px-3 py-2 rounded bg-surface-900 text-surface-300 text-xs border border-surface-600 font-mono resize-none"
-				value={JSON.stringify(sharedCase, null, 2)}
-			/>
+
+			<div class="bg-surface-700/50 rounded-lg p-3 mb-4">
+				<div class="flex items-center gap-2 mb-2">
+					<span
+						class="w-8 h-8 rounded-lg flex items-center justify-center text-lg"
+						style="background: {getTopicById(sharedCase.courseTopicId)?.color || '#666'}22"
+					>
+						{getTopicById(sharedCase.courseTopicId)?.icon || '📄'}
+					</span>
+					<div>
+						<h4 class="font-semibold text-surface-100 text-sm">{sharedCase.name}</h4>
+						<p class="text-[10px] text-surface-400">
+							质量评分: {(computeImagingQualityScore(sharedCase.params) * 100).toFixed(0)}%
+						</p>
+					</div>
+				</div>
+			</div>
+
+			<div class="space-y-2 mb-4">
+				<button
+					on:click={copyShareLink}
+					class="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-primary-600 to-purple-600 text-white hover:from-primary-500 hover:to-purple-500 transition-colors text-sm flex items-center justify-center gap-2 font-medium"
+				>
+					🔗 复制分享链接
+				</button>
+				<p class="text-[10px] text-surface-400 text-center">
+					分享链接 - 对方打开后自动导入
+				</p>
+
+				<button
+					on:click={downloadCaseFile}
+					class="w-full px-4 py-2.5 rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors text-sm flex items-center justify-center gap-2"
+				>
+					📥 下载案例文件
+				</button>
+				<p class="text-[10px] text-surface-400 text-center">
+					下载 .json 文件 - 对方可通过"导入案例"加载
+				</p>
+			</div>
+
+			<div class="border-t border-surface-700 pt-3">
+				<p class="text-xs text-surface-400 mb-2">
+					或者复制 JSON 数据（已自动复制到剪贴板）:
+				</p>
+				<textarea
+					readonly
+					class="w-full h-24 px-3 py-2 rounded bg-surface-900 text-surface-300 text-xs border border-surface-600 font-mono resize-none"
+					value={JSON.stringify(sharedCase, null, 2)}
+				/>
+			</div>
+
 			<div class="flex gap-2 mt-4">
 				<button
 					on:click={() => (showShareInfo = false)}
@@ -448,7 +519,7 @@
 					}}
 					class="flex-1 px-4 py-2 rounded bg-primary-500 text-white hover:bg-primary-400 transition-colors text-sm"
 				>
-					重新复制
+					重新复制 JSON
 				</button>
 			</div>
 		</div>
