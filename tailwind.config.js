@@ -1,11 +1,12 @@
 import { skeleton } from '@skeletonlabs/tw-plugin';
+import path from 'path';
 
 /** @type {import('tailwindcss').Config} */
 export default {
 	darkMode: 'class',
 	content: [
 		'./src/**/*.{html,js,svelte,ts}',
-		require('path').join(require.resolve('@skeletonlabs/skeleton'), '../**/*.{html,js,svelte,ts}')
+		path.join(path.resolve('@skeletonlabs/skeleton'), '../**/*.{html,js,svelte,ts}')
 	],
 	theme: {
 		extend: {

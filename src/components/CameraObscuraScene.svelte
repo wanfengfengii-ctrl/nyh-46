@@ -1,13 +1,23 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, createEventDispatcher } from 'svelte';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-	import type { CameraParams, LightRay, Preset } from '$lib/cameraObscura';
+	import type { CameraParams, LightRay } from '$lib/cameraObscura';
 	import { calculateLightRays } from '$lib/cameraObscura';
 
 	export let params: CameraParams;
 	export let showRays: boolean = true;
-	export let comparePresets: Preset[] = [];
+	export let viewMode: 'simulated' | 'theoretical' = 'simulated';
+	export let syncPosition: { x: number; y: number; z: number } | null = null;
+	export let syncTarget: { x: number; y: number; z: number } | null = null;
+	export let compact: boolean = false;
+
+	const dispatch = createEventDispatcher<{
+		cameraChange: {
+			position: { x: number; y: number; z: number };
+			target: { x: number; y: number; z: number };
+		};
+	}>();
 
 	let container: HTMLDivElement;
 	let scene: THREE.Scene;
@@ -27,10 +37,16 @@
 	let apertureLabel: THREE.Sprite;
 	let imageLabel: THREE.Sprite;
 	let prevBoxLength: number = 0;
-	let compareGroup: THREE.Group = new THREE.Group();
-	let prevCompareIds: string = '';
+	let isUserInteracting: boolean = false;
+	let skipNextSync: boolean = false;
 
-	$: imageResult = calculateLightRays(params, 15);
+	$: imageResult = calculateLightRays(params, compact ? 9 : 15);
+
+	export function getScreenshot(): string | null {
+		if (!renderer) return null;
+		renderer.render(scene, camera);
+		return renderer.domElement.toDataURL('image/png');
+	}
 
 	function createBox(length: number): THREE.Group {
 		const group = new THREE.Group();
@@ -80,7 +96,11 @@
 		const frameThickness = 0.3;
 		const frameOuter = 3;
 
-		const frameTopGeo = new THREE.BoxGeometry(frameThickness, frameThickness * 2, frameOuter * 2);
+		const frameTopGeo = new THREE.BoxGeometry(
+			frameThickness,
+			frameThickness * 2,
+			frameOuter * 2
+		);
 		const frameTop = new THREE.Mesh(frameTopGeo, frontFrameMaterial);
 		frameTop.position.set(-frameThickness / 2, frameOuter, 0);
 		group.add(frameTop);
@@ -89,7 +109,11 @@
 		frameBottom.position.set(-frameThickness / 2, -frameOuter, 0);
 		group.add(frameBottom);
 
-		const frameSideGeo = new THREE.BoxGeometry(frameThickness, frameOuter * 2, frameThickness * 2);
+		const frameSideGeo = new THREE.BoxGeometry(
+			frameThickness,
+			frameOuter * 2,
+			frameThickness * 2
+		);
 		const frameLeft = new THREE.Mesh(frameSideGeo, frontFrameMaterial);
 		frameLeft.position.set(-frameThickness / 2, 0, -frameOuter);
 		group.add(frameLeft);
@@ -145,7 +169,11 @@
 		return mesh;
 	}
 
-	function createImageScreen(length: number): { mesh: THREE.Mesh; texture: THREE.CanvasTexture; canvas: HTMLCanvasElement } {
+	function createImageScreen(length: number): {
+		mesh: THREE.Mesh;
+		texture: THREE.CanvasTexture;
+		canvas: HTMLCanvasElement;
+	} {
 		const canvas = document.createElement('canvas');
 		canvas.width = 512;
 		canvas.height = 512;
@@ -171,7 +199,8 @@
 	function updateImageTexture(
 		canvas: HTMLCanvasElement,
 		texture: THREE.CanvasTexture,
-		params: CameraParams
+		params: CameraParams,
+		mode: 'simulated' | 'theoretical'
 	) {
 		const ctx = canvas.getContext('2d')!;
 		const width = canvas.width;
@@ -198,16 +227,22 @@
 
 		const magnification = params.boxLength / params.objectDistance;
 		const imageHeight = params.objectHeight * magnification;
-		const brightness = (params.lightIntensity * Math.PI * (params.apertureSize / 2) ** 2) / (params.objectDistance ** 2) * 100;
-		const apertureBlur = params.apertureSize * magnification * 2;
-		const totalBlur = apertureBlur * 50;
+		const brightness =
+			((params.lightIntensity * Math.PI * (params.apertureSize / 2) ** 2) /
+				params.objectDistance ** 2) *
+			100;
 
 		const centerX = width / 2;
 		const centerY = height / 2;
 		const scale = height / 6;
 		const imgPixelHeight = imageHeight * scale;
 
-		const blurAmount = Math.min(50, Math.max(0, totalBlur));
+		let blurAmount = 0;
+		if (mode === 'simulated') {
+			const apertureBlur = params.apertureSize * magnification * 2;
+			const totalBlur = apertureBlur * 50;
+			blurAmount = Math.min(50, Math.max(0, totalBlur));
+		}
 
 		ctx.save();
 		ctx.filter = `blur(${blurAmount}px)`;
@@ -222,9 +257,24 @@
 		const brightnessValue = Math.min(255, brightness * 2.5);
 		const alpha = Math.min(1, brightness / 50);
 
-		gradient.addColorStop(0, `rgba(${brightnessValue * 0.6}, ${brightnessValue * 0.3}, ${brightnessValue * 0.3}, ${alpha})`);
-		gradient.addColorStop(0.5, `rgba(${brightnessValue * 0.8}, ${brightnessValue * 0.4}, ${brightnessValue * 0.4}, ${alpha})`);
-		gradient.addColorStop(1, `rgba(${brightnessValue * 0.4}, ${brightnessValue * 0.2}, ${brightnessValue * 0.2}, ${alpha})`);
+		if (mode === 'theoretical') {
+			gradient.addColorStop(0, `rgba(255, 150, 150, ${Math.min(1, alpha * 1.5)})`);
+			gradient.addColorStop(0.5, `rgba(255, 180, 180, ${Math.min(1, alpha * 1.5)})`);
+			gradient.addColorStop(1, `rgba(255, 120, 120, ${Math.min(1, alpha * 1.5)})`);
+		} else {
+			gradient.addColorStop(
+				0,
+				`rgba(${brightnessValue * 0.6}, ${brightnessValue * 0.3}, ${brightnessValue * 0.3}, ${alpha})`
+			);
+			gradient.addColorStop(
+				0.5,
+				`rgba(${brightnessValue * 0.8}, ${brightnessValue * 0.4}, ${brightnessValue * 0.4}, ${alpha})`
+			);
+			gradient.addColorStop(
+				1,
+				`rgba(${brightnessValue * 0.4}, ${brightnessValue * 0.2}, ${brightnessValue * 0.2}, ${alpha})`
+			);
+		}
 
 		ctx.fillStyle = gradient;
 
@@ -251,26 +301,36 @@
 			imgPixelHeight - headHeight - baseHeight
 		);
 
-		ctx.fillRect(
-			centerX - baseWidth / 2,
-			topY,
-			baseWidth,
-			baseHeight
-		);
+		ctx.fillRect(centerX - baseWidth / 2, topY, baseWidth, baseHeight);
 
 		ctx.restore();
 
-		ctx.strokeStyle = 'rgba(100, 100, 100, 0.3)';
-		ctx.lineWidth = 1;
+		if (mode === 'theoretical') {
+			ctx.strokeStyle = 'rgba(100, 200, 255, 0.5)';
+			ctx.lineWidth = 2;
+			ctx.setLineDash([4, 4]);
+		} else {
+			ctx.strokeStyle = 'rgba(100, 100, 100, 0.3)';
+			ctx.lineWidth = 1;
+			ctx.setLineDash([]);
+		}
 		ctx.beginPath();
 		ctx.moveTo(0, centerY);
 		ctx.lineTo(width, centerY);
 		ctx.stroke();
+		ctx.setLineDash([]);
+
+		if (mode === 'theoretical') {
+			ctx.fillStyle = 'rgba(100, 200, 255, 0.7)';
+			ctx.font = 'bold 16px sans-serif';
+			ctx.textAlign = 'center';
+			ctx.fillText('理论成像', width / 2, 30);
+		}
 
 		texture.needsUpdate = true;
 	}
 
-	function createRays(rays: LightRay[]): THREE.Group {
+	function createRays(rays: LightRay[], mode: 'simulated' | 'theoretical'): THREE.Group {
 		const group = new THREE.Group();
 
 		for (const ray of rays) {
@@ -282,12 +342,21 @@
 
 			const geometry = new THREE.BufferGeometry().setFromPoints(points);
 			const intensity = ray.intensity;
-			const color = new THREE.Color().setHSL(0.12, 0.8, 0.5 + intensity * 0.4);
+			let color: THREE.Color;
+			let opacity: number;
+
+			if (mode === 'theoretical') {
+				color = new THREE.Color().setHSL(0.55, 0.8, 0.5 + intensity * 0.4);
+				opacity = 0.2 + intensity * 0.4;
+			} else {
+				color = new THREE.Color().setHSL(0.12, 0.8, 0.5 + intensity * 0.4);
+				opacity = 0.3 + intensity * 0.5;
+			}
 
 			const material = new THREE.LineBasicMaterial({
 				color,
 				transparent: true,
-				opacity: 0.3 + intensity * 0.5
+				opacity
 			});
 
 			const line = new THREE.Line(geometry, material);
@@ -299,8 +368,8 @@
 
 	function initScene() {
 		scene = new THREE.Scene();
-		scene.background = new THREE.Color(0x1a1a2e);
-		scene.fog = new THREE.Fog(0x1a1a2e, 30, 80);
+		scene.background = new THREE.Color(viewMode === 'theoretical' ? 0x0d1a2e : 0x1a1a2e);
+		scene.fog = new THREE.Fog(scene.background as THREE.Color, 30, 80);
 
 		const width = container.clientWidth;
 		const height = container.clientHeight;
@@ -308,10 +377,10 @@
 		camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
 		camera.position.set(8, 6, 12);
 
-		renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer = new THREE.WebGLRenderer({ antialias: !compact, preserveDrawingBuffer: true });
 		renderer.setSize(width, height);
-		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-		renderer.shadowMap.enabled = true;
+		renderer.setPixelRatio(Math.min(window.devicePixelRatio, compact ? 1 : 2));
+		renderer.shadowMap.enabled = !compact;
 		container.appendChild(renderer.domElement);
 
 		controls = new OrbitControls(camera, renderer.domElement);
@@ -320,6 +389,22 @@
 		controls.minDistance = 5;
 		controls.maxDistance = 60;
 		controls.target.set(params.boxLength / 2, 0, 0);
+
+		controls.addEventListener('start', () => {
+			isUserInteracting = true;
+		});
+		controls.addEventListener('end', () => {
+			isUserInteracting = false;
+		});
+		controls.addEventListener('change', () => {
+			if (isUserInteracting) {
+				skipNextSync = true;
+				dispatch('cameraChange', {
+					position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+					target: { x: controls.target.x, y: controls.target.y, z: controls.target.z }
+				});
+			}
+		});
 
 		const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
 		scene.add(ambientLight);
@@ -356,7 +441,7 @@
 		imageCanvas = screenResult.canvas;
 		scene.add(imageScreen);
 
-		raysGroup = createRays(imageResult.rays);
+		raysGroup = createRays(imageResult.rays, viewMode);
 		raysGroup.visible = showRays;
 		scene.add(raysGroup);
 
@@ -368,104 +453,11 @@
 		apertureLabel.position.set(0, Math.max(params.apertureSize + 0.5, 1), 0);
 		scene.add(apertureLabel);
 
-		imageLabel = createTextSprite('成像面', '#66ccff');
+		imageLabel = createTextSprite('成像面', viewMode === 'theoretical' ? '#88ccff' : '#66ccff');
 		imageLabel.position.set(params.boxLength, 2.8, 0);
 		scene.add(imageLabel);
 
-		scene.add(compareGroup);
-
 		prevBoxLength = params.boxLength;
-	}
-
-	function createCompareObject(height: number, color: number, offsetX: number): THREE.Group {
-		const group = new THREE.Group();
-
-		const arrowMaterial = new THREE.MeshPhongMaterial({
-			color,
-			specular: 0x111111,
-			shininess: 30,
-			transparent: true,
-			opacity: 0.7
-		});
-
-		const shaftRadius = 0.1;
-		const shaftHeight = height * 0.7;
-		const shaftGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftHeight, 12);
-		const shaft = new THREE.Mesh(shaftGeo, arrowMaterial);
-		shaft.position.y = shaftHeight / 2 - height / 2 + 0.3;
-		group.add(shaft);
-
-		const headHeight = height * 0.3;
-		const headRadius = 0.25;
-		const headGeo = new THREE.ConeGeometry(headRadius, headHeight, 12);
-		const head = new THREE.Mesh(headGeo, arrowMaterial);
-		head.position.y = height / 2 - headHeight / 2;
-		group.add(head);
-
-		const baseGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.15, 12);
-		const base = new THREE.Mesh(baseGeo, arrowMaterial);
-		base.position.y = -height / 2 + 0.075;
-		group.add(base);
-
-		group.position.x = offsetX;
-		return group;
-	}
-
-	function updateCompareScene() {
-		if (!scene) return;
-
-		const currentIds = comparePresets.map((p) => p.id).join(',');
-		if (currentIds === prevCompareIds) return;
-		prevCompareIds = currentIds;
-
-		compareGroup.traverse((child) => {
-			if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Sprite) {
-				if (child.geometry) child.geometry.dispose();
-				if (child.material) {
-					if (Array.isArray(child.material)) {
-						child.material.forEach((m) => m.dispose());
-					} else {
-						(child.material as THREE.Material).dispose();
-					}
-				}
-			}
-		});
-		while (compareGroup.children.length > 0) {
-			compareGroup.remove(compareGroup.children[0]);
-		}
-
-		if (comparePresets.length === 0) return;
-
-		comparePresets.forEach((preset, i) => {
-			const presetColor = preset.color || '#4fc3f7';
-			const threeColor = new THREE.Color(presetColor);
-			const zOffset = (i + 1) * 2.5;
-
-			const obj = createCompareObject(preset.params.objectHeight, threeColor.getHex(), 0);
-			obj.position.set(-preset.params.objectDistance, 0, zOffset);
-			compareGroup.add(obj);
-
-			const label = createTextSprite(preset.name, presetColor);
-			label.position.set(-preset.params.objectDistance, preset.params.objectHeight / 2 + 0.8, zOffset);
-			compareGroup.add(label);
-
-			const raysData = calculateLightRays(preset.params, 9);
-			for (const ray of raysData.rays) {
-				const points = [
-					new THREE.Vector3(ray.start.x, ray.start.y, zOffset),
-					new THREE.Vector3(ray.aperture.x, ray.aperture.y, zOffset),
-					new THREE.Vector3(ray.end.x, ray.end.y, zOffset)
-				];
-				const geometry = new THREE.BufferGeometry().setFromPoints(points);
-				const material = new THREE.LineBasicMaterial({
-					color: threeColor,
-					transparent: true,
-					opacity: 0.15 + ray.intensity * 0.3
-				});
-				const line = new THREE.Line(geometry, material);
-				compareGroup.add(line);
-			}
-		});
 	}
 
 	function createTextSprite(text: string, color: string): THREE.Sprite {
@@ -495,9 +487,10 @@
 		const boxLengthChanged = prevBoxLength !== 0 && prevBoxLength !== params.boxLength;
 		const oldTarget = boxLengthChanged ? controls.target.clone() : null;
 		const oldCameraPosition = boxLengthChanged ? camera.position.clone() : null;
-		const offset = boxLengthChanged && oldTarget
-			? new THREE.Vector3().subVectors(oldCameraPosition!, oldTarget)
-			: null;
+		const offset =
+			boxLengthChanged && oldTarget
+				? new THREE.Vector3().subVectors(oldCameraPosition!, oldTarget)
+				: null;
 
 		while (boxGroup.children.length > 0) {
 			boxGroup.remove(boxGroup.children[0]);
@@ -521,7 +514,7 @@
 		scene.add(apertureRing);
 
 		imageScreen.position.set(params.boxLength, 0, 0);
-		updateImageTexture(imageCanvas, imageTexture, params);
+		updateImageTexture(imageCanvas, imageTexture, params, viewMode);
 
 		if (raysGroup) {
 			scene.remove(raysGroup);
@@ -532,8 +525,8 @@
 				}
 			});
 		}
-		const raysResult = calculateLightRays(params, 15);
-		raysGroup = createRays(raysResult.rays);
+		const raysResult = calculateLightRays(params, compact ? 9 : 15);
+		raysGroup = createRays(raysResult.rays, viewMode);
 		raysGroup.visible = showRays;
 		scene.add(raysGroup);
 
@@ -557,6 +550,20 @@
 		prevBoxLength = params.boxLength;
 	}
 
+	function applyCameraSync() {
+		if (!camera || !controls) return;
+		if (skipNextSync) {
+			skipNextSync = false;
+			return;
+		}
+		if (isUserInteracting) return;
+		if (syncPosition && syncTarget) {
+			camera.position.set(syncPosition.x, syncPosition.y, syncPosition.z);
+			controls.target.set(syncTarget.x, syncTarget.y, syncTarget.z);
+			controls.update();
+		}
+	}
+
 	function animate() {
 		animationId = requestAnimationFrame(animate);
 		controls.update();
@@ -567,6 +574,7 @@
 		if (!container || !camera || !renderer) return;
 		const width = container.clientWidth;
 		const height = container.clientHeight;
+		if (width === 0 || height === 0) return;
 		camera.aspect = width / height;
 		camera.updateProjectionMatrix();
 		renderer.setSize(width, height);
@@ -599,8 +607,8 @@
 		updateScene();
 	}
 
-	$: if (scene && comparePresets) {
-		updateCompareScene();
+	$: if (syncPosition && syncTarget && !isUserInteracting) {
+		applyCameraSync();
 	}
 
 	$: if (raysGroup) {
