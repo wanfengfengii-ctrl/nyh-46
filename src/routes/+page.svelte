@@ -2,12 +2,19 @@
 	import { onMount } from 'svelte';
 	import CameraObscuraScene from '$components/CameraObscuraScene.svelte';
 	import ControlPanel from '$components/ControlPanel.svelte';
+	import TimelinePanel from '$components/TimelinePanel.svelte';
+	import ParameterTrajectory from '$components/ParameterTrajectory.svelte';
+	import TeachingGuide from '$components/TeachingGuide.svelte';
+	import CourseCaseManager from '$components/CourseCaseManager.svelte';
+	import ConclusionPanel from '$components/ConclusionPanel.svelte';
 	import type {
 		CameraParams,
 		Preset,
 		SchemeSlot,
 		ErrorAnalysis,
-		InvalidDistanceResult
+		InvalidDistanceResult,
+		ExperimentRecording,
+		ExperimentFrame
 	} from '$lib/cameraObscura';
 	import {
 		DEFAULT_PARAMS,
@@ -17,7 +24,8 @@
 		PRESET_COLORS,
 		generateReport,
 		downloadFile,
-		createDefaultScheme
+		createDefaultScheme,
+		loadRecordingsFromStorage
 	} from '$lib/cameraObscura';
 
 	let schemes: SchemeSlot[] = [createDefaultScheme(0)];
@@ -38,7 +46,31 @@
 	let sceneRefs: Record<number, CameraObscuraScene> = {};
 	let splitSceneRefs: Record<string, CameraObscuraScene> = {};
 
+	let currentRecording: ExperimentRecording | null = null;
+	let timelineFrames: ExperimentFrame[] = [];
+	let currentTimelineTime: number = 0;
+	let showTrajectoryPanel: boolean = false;
+	let timelineRef: TimelinePanel | null = null;
+
 	$: currentParams = schemes[activeSchemeIndex]?.params || DEFAULT_PARAMS;
+
+	function handleTimelineSeek(e: CustomEvent<{ params: CameraParams; timestamp: number }>) {
+		updateSchemeParams(activeSchemeIndex, e.detail.params);
+		currentTimelineTime = e.detail.timestamp;
+	}
+
+	function handleRecordingSaved(e: CustomEvent<{ recording: ExperimentRecording }>) {
+		currentRecording = e.detail.recording;
+		timelineFrames = e.detail.recording.frames;
+	}
+
+	function handleApplyTeachingParams(e: CustomEvent<{ params: CameraParams }>) {
+		updateSchemeParams(activeSchemeIndex, e.detail.params);
+	}
+
+	function handleLoadCase(e: CustomEvent<{ params: CameraParams }>) {
+		updateSchemeParams(activeSchemeIndex, e.detail.params);
+	}
 
 	function getSchemeErrorAnalysis(idx: number): ErrorAnalysis {
 		return calculateErrorAnalysis(schemes[idx]?.params || DEFAULT_PARAMS);
@@ -455,29 +487,41 @@
 				<span class="text-2xl">📷</span>
 				<div>
 					<h1 class="text-lg font-bold text-surface-100">
-						暗箱多方案分屏对比与真实成像误差分析系统
+						暗箱历史实验回放与学习引导系统
 					</h1>
 					<p class="text-xs text-surface-400">
-						Multi-Scheme Split Comparison & Error Analysis
+						Historical Experiment Playback & Learning Guidance System
 					</p>
 				</div>
 			</div>
 
 			<div class="flex items-center gap-2">
 				{#if !isMobile}
+					<TeachingGuide params={currentParams} on:applyParams={handleApplyTeachingParams} />
+					<CourseCaseManager
+						params={currentParams}
+						recording={currentRecording}
+						on:loadCase={handleLoadCase}
+					/>
+					<ConclusionPanel
+						recording={currentRecording}
+						currentParams={currentParams}
+					/>
+					<button
+						on:click={() => (showTrajectoryPanel = !showTrajectoryPanel)}
+						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
+						class:bg-primary-600={showTrajectoryPanel}
+						class:text-white={showTrajectoryPanel}
+						title="参数轨迹"
+					>
+						� 轨迹
+					</button>
 					<button
 						on:click={exportScreenshot}
 						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
 						title="导出对比截图"
 					>
-						📸 截图
-					</button>
-					<button
-						on:click={exportReport}
-						class="px-3 py-1.5 text-xs rounded-lg bg-surface-700 text-surface-200 hover:bg-surface-600 transition-colors flex items-center gap-1.5"
-						title="导出参数报告"
-					>
-						📄 报告
+						� 截图
 					</button>
 				{/if}
 				{#if isMobile}
@@ -783,26 +827,37 @@
 
 		{#if !isMobile}
 			<aside
-				class="w-80 bg-surface-800 border-l border-surface-700 flex-shrink-0 overflow-hidden"
+				class="w-80 bg-surface-800 border-l border-surface-700 flex-shrink-0 flex flex-col overflow-hidden"
 			>
-				<ControlPanel
-					params={currentParams}
-					bind:presets
-					bind:showRays
-					bind:selectedPresetId
-					bind:activeSchemeIndex
-					{schemes}
-					{comparePresetIds}
-					onPresetSave={savePreset}
-					onPresetRename={renamePreset}
-					onPresetSelect={selectPreset}
-					onPresetDelete={deletePreset}
-					onToggleCompare={toggleCompare}
-					onSchemeUpdate={updateSchemeParams}
-					onSchemeRename={renameScheme}
-					onAddScheme={addScheme}
-					onRemoveScheme={removeScheme}
-				/>
+				<div class="flex-1 overflow-y-auto">
+					<ControlPanel
+						params={currentParams}
+						bind:presets
+						bind:showRays
+						bind:selectedPresetId
+						bind:activeSchemeIndex
+						{schemes}
+						{comparePresetIds}
+						onPresetSave={savePreset}
+						onPresetRename={renamePreset}
+						onPresetSelect={selectPreset}
+						onPresetDelete={deletePreset}
+						onToggleCompare={toggleCompare}
+						onSchemeUpdate={updateSchemeParams}
+						onSchemeRename={renameScheme}
+						onAddScheme={addScheme}
+						onRemoveScheme={removeScheme}
+					/>
+				</div>
+
+				{#if showTrajectoryPanel}
+					<div class="border-t border-surface-700 p-3 flex-shrink-0">
+						<ParameterTrajectory
+							frames={timelineFrames}
+							currentTime={currentTimelineTime}
+						/>
+					</div>
+				{/if}
 			</aside>
 		{/if}
 	</div>
@@ -849,6 +904,13 @@
 			</div>
 		</div>
 	{/if}
+
+	<TimelinePanel
+		params={currentParams}
+		activeSchemeIndex={activeSchemeIndex}
+		on:seek={handleTimelineSeek}
+		on:recordingSaved={handleRecordingSaved}
+	/>
 </div>
 
 <style>
