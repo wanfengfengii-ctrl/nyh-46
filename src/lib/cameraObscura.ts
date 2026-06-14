@@ -29,6 +29,7 @@ export interface ErrorAnalysis {
 	brightnessError: number;
 	sharpnessError: number;
 	blurCircleDiameter: number;
+	blurCircleError: number;
 	theoretical: TheoreticalResult;
 	simulated: ImageResult;
 }
@@ -228,11 +229,17 @@ export function calculateErrorAnalysis(params: CameraParams): ErrorAnalysis {
 			? (Math.abs(simulated.sharpness - theoretical.sharpness) / theoretical.sharpness) * 100
 			: 0;
 
+	const blurCircleError =
+		simulated.imageHeight > 0
+			? (simulated.blurCircleDiameter / simulated.imageHeight) * 100
+			: 0;
+
 	return {
 		imageHeightError,
 		brightnessError,
 		sharpnessError,
 		blurCircleDiameter: simulated.blurCircleDiameter,
+		blurCircleError,
 		theoretical,
 		simulated
 	};
@@ -435,7 +442,7 @@ tr:nth-child(even){background:#22223a}
 		html += `<tr><td>像高</td><td>${error.theoretical.imageHeight.toFixed(3)}</td><td>${error.simulated.imageHeight.toFixed(3)}</td><td class="${error.imageHeightError > 5 ? 'error-cell' : 'good-cell'}">${error.imageHeightError.toFixed(2)}%</td></tr>`;
 		html += `<tr><td>亮度</td><td>${error.theoretical.brightness.toFixed(2)}%</td><td>${error.simulated.brightness.toFixed(2)}%</td><td class="${error.brightnessError > 20 ? 'error-cell' : error.brightnessError > 10 ? 'warn-cell' : 'good-cell'}">${error.brightnessError.toFixed(2)}%</td></tr>`;
 		html += `<tr><td>清晰度</td><td>${error.theoretical.sharpness.toFixed(1)}%</td><td>${error.simulated.sharpness.toFixed(1)}%</td><td class="${error.sharpnessError > 30 ? 'error-cell' : error.sharpnessError > 15 ? 'warn-cell' : 'good-cell'}">${error.sharpnessError.toFixed(2)}%</td></tr>`;
-		html += `<tr><td>模糊圈直径</td><td>0</td><td>${error.blurCircleDiameter.toFixed(4)}</td><td>${error.blurCircleDiameter.toFixed(4)}</td></tr>`;
+		html += `<tr><td>模糊圈直径</td><td>0</td><td>${error.blurCircleDiameter.toFixed(4)}</td><td class="${error.blurCircleError > 20 ? 'error-cell' : error.blurCircleError > 10 ? 'warn-cell' : 'good-cell'}">模糊占比 ${error.blurCircleError.toFixed(2)}%</td></tr>`;
 		html += `<tr><td>放大倍率</td><td>${error.theoretical.magnification.toFixed(3)}x</td><td>${error.simulated.magnification.toFixed(3)}x</td><td>-</td></tr>`;
 		html += `</table>`;
 

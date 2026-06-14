@@ -90,6 +90,12 @@
 
 	function removeScheme(idx: number) {
 		if (schemes.length <= 1) return;
+		const removed = schemes[idx];
+		if (removed.presetId) {
+			const newSet = new Set(comparePresetIds);
+			newSet.delete(removed.presetId);
+			comparePresetIds = newSet;
+		}
 		schemes = schemes.filter((_, i) => i !== idx);
 		if (activeSchemeIndex >= schemes.length) {
 			activeSchemeIndex = schemes.length - 1;
@@ -98,11 +104,25 @@
 	}
 
 	function updateSchemeParams(idx: number, newParams: CameraParams) {
-		schemes = schemes.map((s, i) => (i === idx ? { ...s, params: newParams } : s));
+		const scheme = schemes[idx];
+		if (scheme?.presetId) {
+			const newSet = new Set(comparePresetIds);
+			newSet.delete(scheme.presetId);
+			comparePresetIds = newSet;
+		}
+		schemes = schemes.map((s, i) =>
+			i === idx ? { ...s, params: newParams, presetId: null } : s
+		);
 	}
 
 	function renameScheme(idx: number, name: string) {
-		schemes = schemes.map((s, i) => (i === idx ? { ...s, name } : s));
+		const scheme = schemes[idx];
+		if (scheme?.presetId) {
+			const newSet = new Set(comparePresetIds);
+			newSet.delete(scheme.presetId);
+			comparePresetIds = newSet;
+		}
+		schemes = schemes.map((s, i) => (i === idx ? { ...s, name, presetId: null } : s));
 	}
 
 	function handleCameraChange(
@@ -136,17 +156,44 @@
 
 	function renamePreset(id: string, newName: string) {
 		presets = presets.map((p) => (p.id === id ? { ...p, name: newName } : p));
+		schemes = schemes.map((s) => (s.presetId === id ? { ...s, name: newName } : s));
 		savePresetsToStorage();
 	}
 
 	function toggleCompare(presetId: string) {
-		const newSet = new Set(comparePresetIds);
-		if (newSet.has(presetId)) {
+		const preset = presets.find((p) => p.id === presetId);
+		if (!preset) return;
+
+		const existingIdx = schemes.findIndex((s) => s.presetId === presetId);
+
+		if (existingIdx >= 0) {
+			if (schemes.length <= 1) return;
+			schemes = schemes.filter((_, i) => i !== existingIdx);
+			if (activeSchemeIndex >= schemes.length) {
+				activeSchemeIndex = schemes.length - 1;
+			}
+			const newSet = new Set(comparePresetIds);
 			newSet.delete(presetId);
+			comparePresetIds = newSet;
+			viewModes = { ...viewModes };
 		} else {
+			if (schemes.length >= 4) {
+				alert('最多支持 4 组方案同时对比，请先移除部分方案');
+				return;
+			}
+			const newScheme: SchemeSlot = {
+				id: generateId(),
+				presetId: preset.id,
+				name: preset.name,
+				params: { ...preset.params },
+				color: preset.color || PRESET_COLORS[schemes.length % PRESET_COLORS.length]
+			};
+			schemes = [...schemes, newScheme];
+			const newSet = new Set(comparePresetIds);
 			newSet.add(presetId);
+			comparePresetIds = newSet;
+			viewModes = { ...viewModes };
 		}
-		comparePresetIds = newSet;
 	}
 
 	function selectPreset(preset: Preset) {
@@ -162,6 +209,16 @@
 		const newSet = new Set(comparePresetIds);
 		newSet.delete(id);
 		comparePresetIds = newSet;
+
+		const linkedSchemeIdx = schemes.findIndex((s) => s.presetId === id);
+		if (linkedSchemeIdx >= 0 && schemes.length > 1) {
+			schemes = schemes.filter((_, i) => i !== linkedSchemeIdx);
+			if (activeSchemeIndex >= schemes.length) {
+				activeSchemeIndex = schemes.length - 1;
+			}
+			viewModes = { ...viewModes };
+		}
+
 		savePresetsToStorage();
 	}
 
@@ -326,7 +383,7 @@
 			const infoLines = [
 				`像高: ${errorAnalysis.simulated.imageHeight.toFixed(3)} (误差: ${errorAnalysis.imageHeightError.toFixed(2)}%)`,
 				`亮度: ${errorAnalysis.simulated.brightness.toFixed(1)}% (误差: ${errorAnalysis.brightnessError.toFixed(1)}%)`,
-				`清晰度: ${errorAnalysis.simulated.sharpness.toFixed(1)}% | 模糊圈: ${errorAnalysis.blurCircleDiameter.toFixed(4)}`
+				`清晰度: ${errorAnalysis.simulated.sharpness.toFixed(1)}% | 模糊圈: ${errorAnalysis.blurCircleDiameter.toFixed(4)} (模糊占比: ${errorAnalysis.blurCircleError.toFixed(2)}%)`
 			];
 			infoLines.forEach((line, i) => {
 				ctx.fillText(line, x, infoY + 28 + i * 16);
@@ -610,9 +667,19 @@
 										</span>
 									</div>
 									<div class="tile-detail-item">
-										<span class="tile-detail-label">模糊圈直径</span>
-										<span class="tile-detail-value text-primary-300">
-											{errorAnalysis.blurCircleDiameter.toFixed(4)}
+										<span class="tile-detail-label">模糊圈占比</span>
+										<span
+											class="tile-detail-value {errorAnalysis.blurCircleError >
+											20
+												? 'text-error-400'
+												: errorAnalysis.blurCircleError > 10
+													? 'text-warning-400'
+													: 'text-success-400'}"
+										>
+											{errorAnalysis.blurCircleError.toFixed(2)}%
+										</span>
+										<span class="text-[9px] text-surface-400 mt-0.5">
+											直径 {errorAnalysis.blurCircleDiameter.toFixed(4)}
 										</span>
 									</div>
 								</div>
@@ -649,6 +716,32 @@
 											<div
 												class="bg-primary-500 h-1 rounded-full"
 												style="width: {errorAnalysis.simulated.sharpness}%"
+											></div>
+										</div>
+									</div>
+									<div class="tile-bar-item">
+										<div class="flex justify-between text-[10px] mb-0.5">
+											<span class="text-surface-400">模糊占比</span>
+											<span
+												class={errorAnalysis.blurCircleError > 20
+													? 'text-error-400'
+													: errorAnalysis.blurCircleError > 10
+														? 'text-warning-400'
+														: 'text-success-400'}
+												>{errorAnalysis.blurCircleError.toFixed(2)}%</span
+											>
+										</div>
+										<div class="w-full bg-surface-700 rounded-full h-1">
+											<div
+												class="{errorAnalysis.blurCircleError > 20
+													? 'bg-error-500'
+													: errorAnalysis.blurCircleError > 10
+														? 'bg-warning-500'
+														: 'bg-success-500'} h-1 rounded-full"
+												style="width: {Math.min(
+													errorAnalysis.blurCircleError,
+													100
+												)}%"
 											></div>
 										</div>
 									</div>

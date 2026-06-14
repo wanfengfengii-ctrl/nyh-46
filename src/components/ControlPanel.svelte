@@ -386,8 +386,8 @@
 					<span class="font-mono text-warning-400"
 						>{formatNumber(errorAnalysis.blurCircleDiameter, 4)}</span
 					>
-					<span class="font-mono text-surface-400"
-						>{formatNumber(errorAnalysis.blurCircleDiameter, 4)}</span
+					<span class="font-mono {getErrorClass(errorAnalysis.blurCircleError, [10, 20])}"
+						>{formatNumber(errorAnalysis.blurCircleError, 2)}%</span
 					>
 				</div>
 
@@ -432,6 +432,32 @@
 						/>
 					</div>
 				</div>
+				<div>
+					<div class="flex justify-between text-xs mb-1">
+						<span class="text-surface-300">模糊占比</span>
+						<span
+							class={errorAnalysis.blurCircleError > 20
+								? 'text-error-400'
+								: errorAnalysis.blurCircleError > 10
+									? 'text-warning-400'
+									: 'text-success-400'}
+							>{formatNumber(errorAnalysis.blurCircleError, 2)}%</span
+						>
+					</div>
+					<div class="w-full bg-surface-700 rounded-full h-1.5">
+						<div
+							class="{errorAnalysis.blurCircleError > 20
+								? 'bg-error-500'
+								: errorAnalysis.blurCircleError > 10
+									? 'bg-warning-500'
+									: 'bg-success-500'} h-1.5 rounded-full transition-all duration-300"
+							style="width: {Math.min(errorAnalysis.blurCircleError, 100)}%"
+						/>
+					</div>
+				</div>
+				<p class="text-[10px] text-surface-500 mt-1 leading-relaxed">
+					模糊占比 = 模糊圈直径 / 像高 × 100%。值越低成像越清晰，＞20%为严重模糊。
+				</p>
 			</div>
 		{/if}
 	</div>
